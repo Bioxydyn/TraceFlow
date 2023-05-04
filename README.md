@@ -1,1 +1,112 @@
 # TraceFlow
+TraceFlow is a Python library designed to help manage software development documentation and testing processes, streamlining the production of requirements, design documents, and test cases (both automated and manual) in PDF format. With built-in support for PDF export, you can easily sign the output making TraceFlow particularly suited for projects in regulated environments or environments where compliance with 21 CFR 11 is necessary.
+
+By leveraging TraceFlow, you can:
+
+- Maintain your documentation in the same git repository as your code, ensuring version control and easy collaboration.
+- Automatically produce a "validation pack" containing all requirements, design, and test plans in PDF format.
+- Generate a traceability matrix linking all requirements to all tests.
+- Create fillable PDF forms for manual tests.
+- Run automated tests and capture their output as Markdown, then include them in the PDF report.
+
+## Getting Started
+To use TraceFlow, organize your Markdown files in the following folder structure:
+```
+project/
+  ├── requirements/
+  │   ├── requirements.md
+  │   └── ...
+  ├── design/
+  │   ├── design.md
+  │   └── ...
+  └── tests/
+      ├── test_plan.md
+      └── ...
+```
+Create your Markdown files based on the provided examples:
+
+Requirements Document Example
+Test Plan Example with Manual Test
+Design Document Example
+Requirements Document Example
+markdown
+
+# Requirements
+```
+# Requirements
+
+## REQ-001: User authentication
+
+Users must be able to authenticate using their email address and a password.
+
+## REQ-002: MRI dataset import
+
+The platform must support importing MRI datasets in DICOM format.
+
+## REQ-003: Image analysis pipeline
+
+- The platform should provide a Python API for building image analysis pipelines.
+- The pipelines must be able to process MRI datasets in a compliant way.
+```
+
+# Test Plan
+```
+## TEST-001: User authentication
+
+**Requirement ID:** REQ-001
+
+### Test Steps:
+
+1. Navigate to the login page.
+2. Enter a valid email address and password.
+3. Click the "Login" button.
+
+### Expected Result:
+
+The user is logged in and redirected to the main dashboard.
+
+### Test Result (Manual):
+
+**[ ] Pass**
+**[ ] Fail**
+
+### Notes:
+
+[Add any additional notes or comments here]
+```
+
+# Design Document
+```
+## User Authentication
+
+To address **REQ-001**, we will implement an authentication system using JWT (JSON Web Tokens). The system will include the following components:
+
+- A login page with input fields for email and password
+- A backend API endpoint to validate user credentials
+- Middleware to validate JWT tokens for accessing protected resources
+
+## MRI Dataset Import
+
+To address **REQ-002**, we will develop a module to import MRI datasets in DICOM format. The module will include:
+
+- A function to parse DICOM files
+- Error handling for unsupported or malformed files
+- Integration with the existing data storage system
+
+## Image Analysis Pipeline
+
+To address **REQ-003**, we will create a Python API for building and executing image analysis pipelines. This API will include:
+
+- A set of Python classes to represent pipeline components
+- Functions to connect and execute pipeline components
+- Compliance checks to ensure the pipeline adheres to the required standards
+```
+
+## Running TraceFlow
+
+With your Markdown files in place, you can run TraceFlow using the following command:
+
+    traceflow --run --pdf
+
+This command will generate PDFs for all your documentation and test cases, as well as a validation pack and traceability matrix.
+
