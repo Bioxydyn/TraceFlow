@@ -25,13 +25,19 @@ project/
 ```
 Create your Markdown files based on the provided examples:
 
-Requirements Document Example
-Test Plan Example with Manual Test
-Design Document Example
-Requirements Document Example
-markdown
+[Requirements Document Example](#requirements-document-example)
+[Test Plan Example with Manual Test](#test-plan-example-with-manual-test)
+[Design Document Example](#design-document-example)
 
-# Requirements
+### Running TraceFlow
+
+With your Markdown files in place, you can run TraceFlow using the following command:
+
+    traceflow --run --pdf
+
+This command will generate a PDF for all of your documentation and test cases, as well as a validation pack and traceability matrix.
+
+### Requirements
 ```
 # Requirements
 
@@ -49,7 +55,7 @@ The platform must support importing MRI datasets in DICOM format.
 - The pipelines must be able to process MRI datasets in a compliant way.
 ```
 
-# Test Plan
+### Test Plan
 ```
 ## TEST-001: User authentication
 
@@ -75,7 +81,7 @@ The user is logged in and redirected to the main dashboard.
 [Add any additional notes or comments here]
 ```
 
-# Design Document
+### Design Document
 ```
 ## User Authentication
 
@@ -101,12 +107,3 @@ To address **REQ-003**, we will create a Python API for building and executing i
 - Functions to connect and execute pipeline components
 - Compliance checks to ensure the pipeline adheres to the required standards
 ```
-
-## Running TraceFlow
-
-With your Markdown files in place, you can run TraceFlow using the following command:
-
-    traceflow --run --pdf
-
-This command will generate PDFs for all your documentation and test cases, as well as a validation pack and traceability matrix.
-
