@@ -27,9 +27,9 @@ project/
 ```
 Create your Markdown files based on the provided examples:
 
- - [Requirements Document Example](#requirements-document-example)
- - [Test Plan Example with Manual Test](#test-plan-example-with-manual-test)
- - [Design Document Example](#design-document-example)
+ - [Requirements Document Example](#requirements)
+ - [Test Plan Example with Manual Test](#test-plan)
+ - [Design Document Example](#design-document)
 
 ### Running TraceFlow
 
