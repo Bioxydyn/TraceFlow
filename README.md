@@ -1,5 +1,5 @@
 # TraceFlow
-TraceFlow is a Python library designed to help manage software development documentation and testing processes, streamlining the production of requirements, design documents, and test cases (both automated and manual) in PDF format. With built-in support for PDF export, you can easily sign the output making TraceFlow particularly suited for projects in regulated environments or environments where compliance with 21 CFR 11 is necessary.
+TraceFlow is a Python library designed to help manage software development documentation and testing processes, streamlining the production of requirements, design documents, and test cases (both automated and manual). With built-in support for PDF export, you can easily sign the output making TraceFlow particularly suited for projects in regulated environments or environments where compliance with 21 CFR 11 is necessary.
 
 By leveraging TraceFlow, you can:
 
@@ -10,7 +10,9 @@ By leveraging TraceFlow, you can:
 - Run automated tests and capture their output as Markdown, then include them in the PDF report.
 
 ## Getting Started
+
 To use TraceFlow, organize your Markdown files in the following folder structure:
+
 ```
 project/
   ├── requirements/
