@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import mistune
 
+
 @dataclass
 class Requirement:
     req_id: str
@@ -33,10 +34,9 @@ def read_file(file_path: str) -> str:
         content = file.read()
     return content
 
-def parse_markdown(content: str) -> Union[str, list[str]]:
-    markdown_parser = mistune.create_markdown()
-    parsed_content = markdown_parser(content)
-    return parsed_content
+def parse_markdown(content: str) -> list[dict]:
+    markdown_parser = mistune.create_markdown(renderer=None)
+    return markdown_parser(content)
 
 def process_directory(directory: str) -> list[Document]:
     documents = []
@@ -46,8 +46,10 @@ def process_directory(directory: str) -> list[Document]:
                 print("Parsing file with name: ", file)
                 file_path = os.path.join(root, file)
                 content = read_file(file_path)
-                parsed_content = parse_markdown(content)
+                parsed_content:  = parse_markdown(content)
                 print(type(parsed_content))
+                print(parsed_content)
+                print("\n\n")
                 if "requirements" in directory:
                     items = extract_requirements(parsed_content)
                 elif "tests" in directory:
@@ -55,7 +57,10 @@ def process_directory(directory: str) -> list[Document]:
                 elif "design" in directory:
                     items = extract_design(parsed_content)
                 else:
-                    print(f"Directory is: {directory}, unsure what to parse as. Directory should contain `requirements`, `tests` or `design`")
+                    print(
+                        f"Directory is: {directory}, unsure what to parse as. Directory should contain"
+                        " `requirements`, `tests` or `design`"
+                    )
                     continue
                 title = extract_title(parsed_content)
                 document = Document(title=title, filename=file, items=items)

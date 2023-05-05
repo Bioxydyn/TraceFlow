@@ -6,7 +6,7 @@ def get_install_requires() -> list[str]:
         "setuptools",
         "alive-progress",
         "wheel",
-        "mistune"
+        "mistune==3.0.0rc5"
     ]
 
 
