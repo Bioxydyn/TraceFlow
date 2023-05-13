@@ -79,12 +79,12 @@ The platform must support importing MRI datasets in DICOM format.
 
 ### Example flow chart (using mermaid)
 
-```mermaid
+\```mermaid
 graph LR
 A[Preprocessing] --> B[Segmentation]
 B --> C[Feature extraction]
 C --> D[Classification]
-```
+\```
 
 ```
 
