@@ -1,27 +1,36 @@
 import os
 from typing import Union
 from dataclasses import dataclass
-
+from pprint import pprint
 import mistune
 
 
 @dataclass
 class Requirement:
     req_id: str
-    description: str
+    content: list[dict]
+    title: str
 
 @dataclass
 class Test:
     test_id: str
-    description: str
+    content: list[dict]
+    title: str
     req_ids: list[str]
+
 
 @dataclass
 class Design:
     design_id: str
-    description: str
-    referenced_requirement_ids: list[str]  # A list of requirement IDs that are present in the description
-    referenced_test_ids: list[str]  # A list of test IDs that are present in the description
+    content: list[dict]
+    title: str
+
+    def get_referenced_requirement_ids() -> list[str]:
+        """ A list of requirement IDs that are present in the description """
+        ...
+    def get_referenced_test_ids() -> list[str]:
+        """ A list of test IDs that are present in the description """
+        ...
 
 @dataclass
 class Document:
@@ -46,10 +55,13 @@ def process_directory(directory: str) -> list[Document]:
                 print("Parsing file with name: ", file)
                 file_path = os.path.join(root, file)
                 content = read_file(file_path)
-                parsed_content:  = parse_markdown(content)
+                parsed_content = parse_markdown(content)
                 print(type(parsed_content))
-                print(parsed_content)
+                pprint(parsed_content)
+                title = extract_title(parsed_content)
+                print("Title: ", title)
                 print("\n\n")
+
                 if "requirements" in directory:
                     items = extract_requirements(parsed_content)
                 elif "tests" in directory:
@@ -62,26 +74,48 @@ def process_directory(directory: str) -> list[Document]:
                         " `requirements`, `tests` or `design`"
                     )
                     continue
-                title = extract_title(parsed_content)
                 document = Document(title=title, filename=file, items=items)
                 documents.append(document)
     return documents
 
-def extract_title(parsed_content: Union[str, list[str]]) -> str:
-    # Extract the first line as the title
-    title = parsed_content.split("\n")[0].strip("# ")
-    return title
+def is_ast_element_heading(elem: dict) -> int:
+    """ Returns 0 if NOT a heading, else returns the level"""
+    if elem["type"] != "heading":
+        return 0
+    return elem["attrs"]["level"]
 
-def extract_requirements(parsed_content: Union[str, list[str]]) -> list[Requirement]:
+def get_heading_text(elem: dict) -> str:
+    return elem["children"][0]["raw"].strip()
+
+def extract_title(parsed_content: list[dict]) -> str:
+    # Extract the first L1 heading as the title. If no such heading exists, that's an error.
+    if len(parsed_content) == 0:
+        raise ValueError("File has no content")
+    if is_ast_element_heading(parsed_content[0]) != 1:
+        raise ValueError("First element in file is not L1 heading")
+    return get_heading_text(parsed_content[0])
+
+def extract_requirements(parsed_content: list[dict]) -> list[Requirement]:
     requirements = []
-    for line in parsed_content.split("\n"):
-        if line.startswith("##"):
-            req_id, description = line.strip("## ").split(": ", 1)
-            requirement = Requirement(req_id=req_id, description=description)
-            requirements.append(requirement)
+    # Every L2 heading in the page must be a requirement
+    current_req = Requirement(req_id="", content=[], title="")
+    has_started = False
+    for elem in parsed_content:
+        if is_ast_element_heading(elem) == 2:
+            has_started = True
+            heading_text = get_heading_text(elem)
+            current_req.req_id = heading_text.split(" ")[0].replace(":", "")
+            current_req.title = heading_text
+            if len(current_req.content) > 0:
+                requirements.append(current_req)
+                current_req = Requirement(req_id="", content=[], title="")
+        else:
+            if has_started:
+                current_req.content.append(elem)
+
     return requirements
 
-def extract_tests(parsed_content: Union[str, list[str]]) -> list[Test]:
+def extract_tests(parsed_content: list[dict]) -> list[Test]:
     tests: list[Test] = []
     test_id = ""
     req_ids: list[str] = []
