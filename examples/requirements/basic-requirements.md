@@ -18,21 +18,12 @@ The platform must support importing MRI datasets in DICOM format.
 
 ### Example image (.png)
 
-![MRI Sample](./mri_sample.png)
+![MRI Sample](./traceflow-logo.png)
 
 ## REQ-003: Image analysis pipeline
 
 - The platform should provide a Python API for building image analysis pipelines.
 - The pipelines must be able to process MRI datasets in a compliant way.
-
-### Example table
-
-| Step          | Description                                      | API Function       |
-|---------------|--------------------------------------------------|--------------------|
-| Preprocessing | Remove noise, artifacts, and normalize intensity | preprocess_data()  |
-| Segmentation  | Segment the relevant regions of interest         | segment_roi()      |
-| Feature extraction | Extract features from segmented regions      | extract_features() |
-| Classification | Classify the extracted features                 | classify_data()    |
 
 ### Example flow chart (using mermaid)
 
@@ -42,3 +33,11 @@ A[Preprocessing] --> B[Segmentation]
 B --> C[Feature extraction]
 C --> D[Classification]
 ```
+
+### Example code block
+
+```python
+def hello_world():
+    print("Hello world!")
+```
+

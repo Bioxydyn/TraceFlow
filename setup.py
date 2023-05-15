@@ -4,9 +4,11 @@ from setuptools import setup, find_packages
 def get_install_requires() -> list[str]:
     return [
         "setuptools",
-        "alive-progress",
         "wheel",
-        "mistune==3.0.0rc5"
+        "mistune==3.0.0rc5",
+        "latex==0.7.0",
+        "cairosvg==1.5.1",
+        "Jinja2==3.1.2",
     ]
 
 

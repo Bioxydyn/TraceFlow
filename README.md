@@ -1,4 +1,7 @@
 # TraceFlow
+
+![TraceFlow Logo](./traceflow/res/traceflow-logo.png)
+
 TraceFlow is a Python library designed to help manage software development documentation and testing processes, streamlining the production of requirements, design documents, and test cases (both automated and manual). With built-in support for PDF export, you can easily sign the output making TraceFlow particularly suited for projects in regulated environments or environments where compliance with 21 CFR 11 is necessary.
 
 By leveraging TraceFlow, you can:
@@ -61,7 +64,7 @@ The platform must support importing MRI datasets in DICOM format.
 
 ### Example image (.png)
 
-![MRI Sample](./mri_sample.png)
+![Caption for example image](./mri_sample.png)
 
 ## REQ-003: Image analysis pipeline
 
