@@ -1,0 +1,16 @@
+flake8
+flake8-bugbear
+flake8-builtins
+flake8-fixme
+flake8-walrus
+flake8-return
+flake8-printf-formatting
+flake8-broken-line
+flake8-comprehensions
+flake8-eradicate
+flake8-executable
+flake8-bandit
+flake8-annotations
+pytest
+mypy
+coverage

@@ -1,0 +1,81 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+
+\usepackage{geometry}
+\geometry{verbose,tmargin=3.0cm,bmargin=2.0cm,lmargin=0.5cm,rmargin=0.5cm,headheight=38pt}
+\renewcommand{\familydefault}{\sfdefault}
+
+\usepackage{tabularx} % in the preamble
+\usepackage{array}
+\usepackage{hhline}
+\usepackage{amssymb}
+\usepackage{listings}
+
+\usepackage{fancyhdr}
+\makeatletter
+\makeatother
+\providecommand{\tabularnewline}{\\}
+
+\usepackage[usenames,dvipsnames,svgnames,table, xcdraw]{xcolor} % use color
+\usepackage{booktabs} % commands for table rules
+\usepackage{tikz}
+\usepackage{lastpage}
+
+\usepackage[utf8]{inputenc}
+\usepackage{hyperref}
+
+\usepackage{pgfplots}
+\DeclareUnicodeCharacter{2212}{−}
+\usepgfplotslibrary{groupplots,dateplot}
+\usetikzlibrary{patterns,shapes.arrows}
+\pgfplotsset{compat=newest}
+
+\usetikzlibrary{calc,shadings,patterns,tikzmark}
+
+\newcommand\HatchedCell[4][0pt]{%
+  \begin{tikzpicture}[overlay,remember picture]%
+    \fill[#4] ( $ (pic cs:#2) + (0.0ex,1.9ex) $ ) rectangle ( $ (pic cs:#3) + (0.4ex,-#1*\baselineskip-.8ex) $ );
+  \end{tikzpicture}%
+}%
+
+\newlength\colW \setlength\colW{0.096\columnwidth}
+
+% Command hatch takes 5 args. Arg 1 = index into the HachtedCell command after table, arg 2 = width of cell in cols, 
+% arg 3 = the cell contents, args 4 & 5 are the cell side wall specifies, e.g. {|}{}
+\newcommand*{\hatch}[5]{\multicolumn{#2}{#4!{\hspace*{-0.4pt}\tikzmark{start#1}} c !{\tikzmark{end#1}}#5}{#3}}
+\newcommand*{\cellnormal}[4]{\multicolumn{#1}{#3 l #4}{#2}}
+
+\newcommand*{\grayc}{\cellcolor{gray!25}}
+\newcommand*{\darkgrayc}{\cellcolor{gray!65}}
+\newcommand*{\errorc}{\cellcolor{red!50}}
+\newcommand{\rom}{}
+
+\newcommand*{\emptycheck}{\hspace{0.2cm}\makebox[0pt][l]{$\square$}{}\hspace{0.8cm}}
+\newcommand*{\positivecheck}{\hspace{0.2cm}\makebox[0pt][l]{$\square$}\raisebox{.15ex}{\hspace{0.1em}$\checkmark$}\hspace{0.8cm}}
+\newcommand*{\negativecheck}{\hspace{0.2cm}\makebox[0pt][l]{$\square$}{$\times$}\hspace{0.8cm}}
+
+
+\begin{document}
+
+\setlength{\topmargin}{-56pt}
+\setlength{\headsep}{18pt}
+\setlength{\footskip}{55pt}
+
+\fancypagestyle{plain}{
+  \fancyhf{}% Clear header/footer
+	\fancyhead[L]{
+	\includegraphics[width=4cm,keepaspectratio]{traceflow-logo.png}
+	}
+	\fancyhead[R]{
+        \textbf{\Large{VoxelFlow Validation Pack}}
+    }
+	\lfoot{
+	\includegraphics[width=3cm,keepaspectratio]{voxelflow-logo.png}
+	}
+	\rfoot{\emph{Page \thepage\ of \pageref{LastPage}}}
+	\cfoot{Report produced using TraceFlow \VAR{version} }
+	\renewcommand{\headrulewidth}{0.4pt}
+	\renewcommand{\footrulewidth}{0.4pt}
+}
+\pagestyle{plain}% Set page style to plain.
+
