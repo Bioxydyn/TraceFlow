@@ -4,30 +4,27 @@ include README.md
 include requirements.txt
 include MANIFEST.in
 
-recursive-include pipelines *
-recursive-include docs *
+recursive-include traceflow *
 recursive-include tests *
-recursive-include extra *
 recursive-include examples *
-recursive-include benchmarks *
-recursive-include voxelflow *.jinja
-recursive-include voxelflow *.html
-recursive-include voxelflow *.svg
-recursive-include voxelflow *.otf
-recursive-include voxelflow *.tex
-recursive-include voxelflow *.pdf
-recursive-include voxelflow *.png
-recursive-include voxelflow *.sh
-recursive-include voxelflow *.md
-recursive-include voxelflow *.css
-recursive-include voxelflow *.js
-recursive-include voxelflow *.map
-recursive-include voxelflow *.ico
-recursive-include voxelflow *.json
-recursive-include voxelflow *.csv
-recursive-include voxelflow *.xlsx
-recursive-include voxelflow *.docx
-recursive-include voxelflow *.zip
-recursive-include voxelflow *.pb
+recursive-include traceflow *.jinja
+recursive-include traceflow *.html
+recursive-include traceflow *.svg
+recursive-include traceflow *.otf
+recursive-include traceflow *.tex
+recursive-include traceflow *.pdf
+recursive-include traceflow *.png
+recursive-include traceflow *.sh
+recursive-include traceflow *.md
+recursive-include traceflow *.css
+recursive-include traceflow *.js
+recursive-include traceflow *.map
+recursive-include traceflow *.ico
+recursive-include traceflow *.json
+recursive-include traceflow *.csv
+recursive-include traceflow *.xlsx
+recursive-include traceflow *.docx
+recursive-include traceflow *.zip
+recursive-include traceflow *.pb
 
 recursive-exclude .tox *
