@@ -146,12 +146,15 @@ def md_to_latex(items: list[dict]) -> str:
             "image": handle_image,
             "block_code": handle_block_code,
             "blank_line": lambda _: "\n",
+            "strong": lambda item: f"\\textbf{{{process_text(item['children'][0]['raw'])}}}",
+            "softbreak": lambda _: "\n",
         }
         handler = handlers.get(item["type"])
         if handler:
             return handler(item)
         else:
             print(f"Unknown item type: {item['type']}")
+            print(item)
         return ""
 
     latex = []
@@ -187,15 +190,23 @@ class PdfReport():
                 document += "\\section{" + page.title + "}\n\n"
 
                 for requirement in page.items:
-                    for i in page.items:
-                        # format the dict as a json string with nice formatting
-                        json_str = json.dumps(i.content, indent=4, sort_keys=True)
-                        print(json_str)
-                        print("\n\n")
-
-                    document += "\\subsection{" + requirement.title + "}\n\n"
+                    document += "\\subsection{" + requirement.req_id + ": " + requirement.title + "}\n\n"
                     document += md_to_latex(requirement.content)
                     document += "\n\n"
+
+                # Add a page break
+                document += "\\newpage\n\n"
+
+            for page in self.document.tests:
+                document += "\\section{" + page.title + "}\n\n"
+
+                for test in page.items:
+                    document += "\\subsection{" + test.test_id + ": " + test.title + "}\n\n"
+                    document += md_to_latex(test.content)
+                    document += "\n\n"
+
+                # Add a page break
+                document += "\\newpage\n\n"
 
             document += r"%%%%%%%%%%% END DOCUMENT" + "\n\n" r"\end{document}" + "\n"
 

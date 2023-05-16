@@ -15,5 +15,7 @@
 
 The user is logged in and redirected to the main dashboard.
 
+### Test Outcome:
+
 ```manualtest
 ```

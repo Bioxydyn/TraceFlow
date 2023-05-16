@@ -73,7 +73,7 @@ class SubDocument(Generic[T]):
 class RequirementDocument(SubDocument[Requirement]):
     @staticmethod
     def item_generator(parsed_content: list[dict]) -> list[Requirement]:
-        requirements = []
+        requirements: list[Requirement] = []
         # Every L2 heading in the page must be a requirement
         current_req = Requirement(req_id="", content=[], title="")
         for elem in parsed_content:
@@ -82,7 +82,6 @@ class RequirementDocument(SubDocument[Requirement]):
                     requirements.append(current_req)
                     current_req = Requirement(req_id="", content=[], title="")
                 heading_text = get_heading_text(elem)
-                print("   Found L2 heading text", heading_text)
                 current_req.req_id = heading_text.split(" ")[0].replace(":", "")
                 current_req.title = heading_text.replace(current_req.req_id + ":", "").strip()
             else:
@@ -102,25 +101,24 @@ class TestDocument(SubDocument[Test]):
     def item_generator(parsed_content: list[dict]) -> list[Test]:
         tests: list[Test] = []
         current_test = Test(test_id="", content=[], title="", req_ids=[])
-        has_started = False
         for elem in parsed_content:
             if is_ast_element_heading(elem) == 2:
-                has_started = True
+                if len(current_test.content) > 0:
+                    tests.append(current_test)
+                    current_test = Test(test_id="", content=[], title="", req_ids=[])
                 heading_text = get_heading_text(elem)
                 current_test.test_id = heading_text.split(" ")[0].replace(":", "")
-                current_test.title = heading_text
-                if len(current_test.content) > 0:
-                    tests.append(current_req)
-                    current_req = Test(test_id="", content=[], title="", req_ids=[])
+                current_test.title = heading_text.replace(current_test.test_id + ":", "").strip()
             else:
-                if has_started:
+                if current_test.test_id != "":
                     current_test.content.append(elem)
-
+        if len(current_test.content) > 0:
+            tests.append(current_test)
         return tests
 
     @staticmethod
-    def from_file(file_path: str) -> 'RequirementDocument':
-        return SubDocument.from_file(file_path, RequirementDocument.item_generator)
+    def from_file(file_path: str) -> 'TestDocument':
+        return SubDocument.from_file(file_path, TestDocument.item_generator)
 
 
 @dataclass
@@ -136,6 +134,7 @@ def read_file(file_path: str) -> str:
         content = file.read()
     return content
 
+
 def parse_markdown(content: str) -> list[dict]:
     markdown_parser = mistune.create_markdown(renderer=None)
     return markdown_parser(content)
@@ -148,11 +147,11 @@ def process_directory(directory: str) -> Document:
         for file in files:
             if file.endswith(".md"):
                 file_path = os.path.join(root, file)
-                if "requirements" in file_path:
+                if "req" in file_path.lower():
                     requirements.append(RequirementDocument.from_file(file_path))
-                elif "tests" in file_path:
+                elif "test" in file_path.lower():
                     tests.append(TestDocument.from_file(file_path))
-                elif "design" in file_path:
+                elif "design" in file_path.lower():
                     print("Warning, skipping design parsing (not implemented)")
                 else:
                     print(

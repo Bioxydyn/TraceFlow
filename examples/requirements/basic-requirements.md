@@ -40,8 +40,3 @@ C --> D[Classification]
 def hello_world():
     print("Hello world!")
 ```
-
-### Example Manual Test Input
-
-```manualtest
-```
