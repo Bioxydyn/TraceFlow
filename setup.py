@@ -38,7 +38,7 @@ def get_extras_require() -> dict[str, list[str]]:
 
 setup(
     name="traceflow",
-    version="0.1.0",
+    version="0.0.4",
     packages=find_packages(),
     install_requires=get_install_requires(),
     extras_require=get_extras_require(),

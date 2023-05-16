@@ -184,6 +184,10 @@ class PdfReport():
         document = header.render(**self.get_global_tex_vars())
 
         output = b""
+        # Create the "report" directory if it doesn't exist
+        if not os.path.exists("report"):
+            os.mkdir("report")
+
         with isolated_filesystem("report"):
 
             for page in self.document.requirements:
