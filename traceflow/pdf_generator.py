@@ -42,7 +42,7 @@ def isolated_filesystem(temp_path: str = None):
 
 def md_to_latex(items: list[dict]) -> str:
     def process_text(text: str) -> str:
-        return text.replace("_", "\\_")
+        return text.replace(r"&", r"\&").replace(r"_", r"\_")
 
     def handle_paragraph(item: dict) -> str:
         latex = ["\n"]
@@ -72,7 +72,7 @@ def md_to_latex(items: list[dict]) -> str:
         return "".join(latex)
 
     def handle_image(item: dict) -> str:
-        url = process_text(item["src"])
+        url = item["src"]
         latex = [
             '\n\\begin{figure}[h]',
             '\n\\centering',
