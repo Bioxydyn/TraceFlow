@@ -6,3 +6,27 @@ if __name__ == "__main__":
 
     report: PdfReport = PdfReport(document)
     report.render()
+
+
+#     {
+#         "children": [
+#             {
+#                 "attrs": {
+#                     "url": "./traceflow-logo.png"
+#                 },
+#                 "children": [
+#                     {
+#                         "raw": "MRI Sample",
+#                         "type": "text"
+#                     }
+#                 ],
+#                 "type": "image"
+#             }
+#         ],
+#         "type": "paragraph"
+#     },
+#     {
+#         "type": "blank_line"
+#     }
+# ]
+

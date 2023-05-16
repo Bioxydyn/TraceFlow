@@ -15,11 +15,5 @@
 
 The user is logged in and redirected to the main dashboard.
 
-### Test Result (Manual):
-
-**[ ] Pass**
-**[ ] Fail**
-
-### Notes:
-
-[Add any additional notes or comments here]
+```manualtest
+```

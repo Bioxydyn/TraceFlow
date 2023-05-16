@@ -83,10 +83,27 @@ def md_to_latex(items: list[dict]) -> str:
         return ''.join(latex)
 
     def handle_block_code(item: dict) -> str:
-        if "attrs" in item and "info" in item["attrs"] and item["attrs"]["info"] == "mermaid":
+        code_type = None
+        if "attrs" in item and "info" in item["attrs"]:
+            code_type = item["attrs"]["info"]
+
+        if code_type == "mermaid":
             return handle_mermaid(item)
+        elif code_type == "manualtest":
+            return handle_manual_test(item)
         else:
             return handle_code(item)
+
+    def handle_manual_test(item: dict) -> str:
+        return r"""
+\noindent
+\begin{Form}
+\textbf{Pass} \CheckBox[name=pass]{} \hspace{2cm} \textbf{Fail} \CheckBox[name=fail]{} \\
+\vspace{0.2cm}
+\textbf{Comments} \\
+\TextField[name=comments, multiline=true, width=\linewidth, height=2cm]{}
+\end{Form}
+        """
 
     def handle_code(item: dict) -> str:
         language = None
