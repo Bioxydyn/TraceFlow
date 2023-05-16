@@ -5,7 +5,7 @@ def get_install_requires() -> list[str]:
     return [
         "setuptools",
         "wheel",
-        "mistune==3.0.0rc5",
+        "mistune==2.0.5",
         "latex==0.7.0",
         "cairosvg==2.7.0",
         "Jinja2==3.1.2",

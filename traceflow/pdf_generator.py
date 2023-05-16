@@ -42,50 +42,50 @@ def isolated_filesystem(temp_path: str = None):
 
 def md_to_latex(items: list[dict]) -> str:
     def process_text(text: str) -> str:
-        return text.replace('_', '\\_')
+        return text.replace("_", "\\_")
 
     def handle_paragraph(item: dict) -> str:
-        latex = ['\n']
-        for child in item['children']:
-            if child['type'] == 'text':
-                latex.append(process_text(child['raw']))
+        latex = ["\n"]
+        for child in item["children"]:
+            if child["type"] == "text":
+                latex.append(process_text(child["text"]))
             else:
                 latex.append(handle_item(child))
-        return ''.join(latex)
+        return "".join(latex)
 
     def handle_heading(item: dict) -> str:
-        level = item['attrs']['level']
-        heading = '\\' + 'sub' * (level - 1) + 'section{' + process_text(item['children'][0]['raw']) + '}'
+        level = item["level"]
+        heading = "\\" + "sub" * (level - 1) + "section{" + process_text(item["children"][0]["text"]) + "}"
         return heading
 
     def handle_list(item: dict) -> str:
-        latex = ['\\begin{itemize}']
-        for list_item in item['children']:
-            latex.append('\n\\item ')
-            for child in list_item['children']:
-                if child['type'] == 'text':
-                    latex.append(process_text(child['raw']))
-                if child['type'] == 'block_text':
-                    latex.append(process_text(child['children'][0]['raw']))
+        latex = ["\\begin{itemize}"]
+        for list_item in item["children"]:
+            latex.append("\n\\item ")
+            for child in list_item["children"]:
+                if child["type"] == "text":
+                    latex.append(process_text(child["text"]))
+                if child["type"] == "block_text":
+                    latex.append(process_text(child["children"][0]["text"]))
 
-        latex.append('\n\\end{itemize}')
-        return ''.join(latex)
+        latex.append("\n\\end{itemize}")
+        return "".join(latex)
 
     def handle_image(item: dict) -> str:
-        url = process_text(item["attrs"]["url"])
+        url = process_text(item["src"])
         latex = [
             '\n\\begin{figure}[h]',
             '\n\\centering',
             f'\n\\includegraphics[width=0.5\\textwidth]{{{url}}}',
-            f'\n\\caption{{{process_text(item["children"][0]["raw"])}}}',
+            f'\n\\caption{{{process_text(item["alt"])}}}',
             '\n\\end{figure}',
         ]
         return ''.join(latex)
 
     def handle_block_code(item: dict) -> str:
         code_type = None
-        if "attrs" in item and "info" in item["attrs"]:
-            code_type = item["attrs"]["info"]
+        if "info" in item:
+            code_type = item["info"]
 
         if code_type == "mermaid":
             return handle_mermaid(item)
@@ -107,10 +107,9 @@ def md_to_latex(items: list[dict]) -> str:
 
     def handle_code(item: dict) -> str:
         language = None
-        if "attrs" in item and "info" in item["attrs"]:
-            language = item["attrs"]["info"]
-
-        code_content = item["raw"]
+        if "info" in item:
+            language = item["info"]
+        code_content = item["text"]
 
         if language:
             return f"\\begin{{lstlisting}}[language={language}]\n{code_content}\n\\end{{lstlisting}}"
@@ -121,20 +120,20 @@ def md_to_latex(items: list[dict]) -> str:
         with tempfile.NamedTemporaryFile(suffix='.svg', delete=False) as svg_file:
             svg_path = svg_file.name
 
-        mermaid_code = item['raw']
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.mmd', delete=False) as mmd_file:
+        mermaid_code = item["text"]
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".mmd", delete=False) as mmd_file:
             mmd_file.write(mermaid_code)
             mmd_path = mmd_file.name
 
-        subprocess.run(['mmdc', '-i', mmd_path, '-o', svg_path], check=True)
+        subprocess.run(["mmdc", "-i", mmd_path, "-o", svg_path], check=True)
 
         os.remove(mmd_path)
 
         # Convert the SVG to PDF
-        pdf_path = svg_path.replace('.svg', '.pdf')
+        pdf_path = svg_path.replace(".svg", ".pdf")
         cairosvg.svg2pdf(url=svg_path, write_to=pdf_path)
         os.remove(svg_path)
-        latex = handle_image({'attrs': {'url': pdf_path}, 'children': [{'raw': 'Mermaid diagram', 'type': 'text'}], 'type': 'image'})
+        latex = handle_image({"src": pdf_path, "alt": "", "title": "", "type": "image"})
 
         return latex
 
@@ -146,7 +145,7 @@ def md_to_latex(items: list[dict]) -> str:
             "image": handle_image,
             "block_code": handle_block_code,
             "blank_line": lambda _: "\n",
-            "strong": lambda item: f"\\textbf{{{process_text(item['children'][0]['raw'])}}}",
+            "strong": lambda item: f"\\textbf{{{process_text(item['children'][0]['text'])}}}",
             "softbreak": lambda _: "\n",
         }
         handler = handlers.get(item["type"])

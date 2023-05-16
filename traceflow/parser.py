@@ -136,7 +136,7 @@ def read_file(file_path: str) -> str:
 
 
 def parse_markdown(content: str) -> list[dict]:
-    markdown_parser = mistune.create_markdown(renderer=None)
+    markdown_parser = mistune.create_markdown(renderer=mistune.AstRenderer())
     return markdown_parser(content)
 
 
@@ -167,11 +167,11 @@ def is_ast_element_heading(elem: dict) -> int:
     """ Returns 0 if NOT a heading, else returns the level"""
     if elem["type"] != "heading":
         return 0
-    return elem["attrs"]["level"]
+    return elem["level"]
 
 
 def get_heading_text(elem: dict) -> str:
-    return elem["children"][0]["raw"].strip()
+    return elem["children"][0]["text"].strip()
 
 
 def extract_title(parsed_content: list[dict]) -> str:
