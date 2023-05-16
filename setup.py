@@ -49,7 +49,15 @@ def get_extras_require() -> dict[str, list[str]]:
 
 setup(
     name="traceflow",
+    description="A Python library for managing software development documentation and testing, automating the"
+        " generation of PDFs for requirements, design documents, and test cases with built-in compliance support.",
     version=get_version("traceflow"),
+    author="Bioxydyn Ltd",
+    license="Commercial",
+    python_requires=">=3.7.0",
+    package_dir={"traceflow": "traceflow"},
+    include_package_data=True,
+    zip_safe=False,
     packages=find_packages(),
     install_requires=get_install_requires(),
     extras_require=get_extras_require(),
