@@ -18,7 +18,7 @@ The platform must support importing MRI datasets in DICOM format.
 
 ### Example image (.png)
 
-![MRI Sample](./traceflow-logo.png)
+![VoxelFlow Logo](./voxelflow-logo.png)
 
 ## REQ-003: Image analysis pipeline
 
