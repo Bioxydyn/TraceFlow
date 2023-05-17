@@ -38,7 +38,7 @@ Create your Markdown files based on the provided examples:
 
 With your Markdown files in place, you can run TraceFlow using the following command:
 
-    traceflow --run --pdf
+    traceflow path/to/project-docs project.pdf
 
 This command will generate a PDF for all of your documentation and test cases, as well as a validation pack and traceability matrix.
 

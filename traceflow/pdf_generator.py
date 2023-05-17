@@ -147,6 +147,7 @@ def md_to_latex(items: list[dict]) -> str:
             "blank_line": lambda _: "\n",
             "strong": lambda item: f"\\textbf{{{process_text(item['children'][0]['text'])}}}",
             "softbreak": lambda _: "\n",
+            "codespan": lambda item: f"\\texttt{{{process_text(item['text'])}}}",
         }
         handler = handlers.get(item["type"])
         if handler:
