@@ -11,7 +11,6 @@ def get_version(package: str) -> str:
     return re.search("__version__ = ['\"]([^'\"]+)['\"]", version).group(1)
 
 
-
 def get_install_requires() -> list[str]:
     return [
         "setuptools",
