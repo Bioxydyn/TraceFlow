@@ -40,9 +40,11 @@ def isolated_filesystem(temp_path: str = None):
             shutil.rmtree(temp_path)
 
 
+def process_text(text: str) -> str:
+    return text.replace(r"&", r"\&").replace(r"_", r"\_")
+
+
 def md_to_latex(items: list[dict]) -> str:
-    def process_text(text: str) -> str:
-        return text.replace(r"&", r"\&").replace(r"_", r"\_")
 
     def handle_paragraph(item: dict) -> str:
         latex = ["\n"]
@@ -66,7 +68,10 @@ def md_to_latex(items: list[dict]) -> str:
                 if child["type"] == "text":
                     latex.append(process_text(child["text"]))
                 if child["type"] == "block_text":
-                    latex.append(process_text(child["children"][0]["text"]))
+                    try:
+                        latex.append(process_text(child["children"][0]["text"]))
+                    except IndexError:
+                        print("Warning, empty block text:", child)
 
         latex.append("\n\\end{itemize}")
         return "".join(latex)
@@ -182,7 +187,7 @@ class PdfReport():
         )
 
         tex_vars = self.get_global_tex_vars()
-        tex_vars["report_title"] = self.document.name + " " + self.document.version + ": Validation Pack"
+        tex_vars["report_title"] = process_text(self.document.name + " " + self.document.version + ": Validation Pack")
         document = header.render(**tex_vars)
 
         output = b""
@@ -196,7 +201,7 @@ class PdfReport():
                 document += "\\section{" + page.title + "}\n\n"
 
                 for requirement in page.items:
-                    document += "\\subsection{" + requirement.req_id + ": " + requirement.title + "}\n\n"
+                    document += "\\subsection{" + process_text(requirement.req_id + ": " + requirement.title) + "}\n\n"
                     document += md_to_latex(requirement.content)
                     document += "\n\n"
 
@@ -207,7 +212,7 @@ class PdfReport():
                 document += "\\section{" + page.title + "}\n\n"
 
                 for test in page.items:
-                    document += "\\subsection{" + test.test_id + ": " + test.title + "}\n\n"
+                    document += "\\subsection{" + process_text(test.test_id + ": " + test.title) + "}\n\n"
                     document += md_to_latex(test.content)
                     document += "\n\n"
 
