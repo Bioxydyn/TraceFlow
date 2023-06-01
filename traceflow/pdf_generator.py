@@ -100,10 +100,13 @@ def md_to_latex(items: list[dict]) -> str:
             return handle_code(item)
 
     def handle_manual_test(item: dict) -> str:
+        pass_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
+        fail_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
+        skip_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
         return r"""
 \noindent
 \begin{Form}
-\textbf{Pass} \CheckBox[name=pass]{} \hspace{2cm} \textbf{Fail} \CheckBox[name=fail]{} \hspace{2cm} \textbf{Skip} \CheckBox[name=fail]{} \\
+\textbf{Pass} \CheckBox[name=""" + pass_id + r"""]{} \hspace{2cm} \textbf{Fail} \CheckBox[name=""" + fail_id + r"""]{} \hspace{2cm} \textbf{Skip} \CheckBox[name=""" + skip_id + r"""]{} \\
 \vspace{0.2cm}
 \textbf{Comments} \\
 \TextField[name=comments, multiline=true, width=\linewidth, height=2cm]{}
