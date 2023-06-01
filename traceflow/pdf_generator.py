@@ -181,7 +181,9 @@ class PdfReport():
             get_data("traceflow.res", "report-header.tex").decode("utf-8")
         )
 
-        document = header.render(**self.get_global_tex_vars())
+        tex_vars = self.get_global_tex_vars()
+        tex_vars["report_title"] = self.document.name + " " + self.document.version + ": Validation Pack"
+        document = header.render(**tex_vars)
 
         output = b""
         # Create the "report" directory if it doesn't exist

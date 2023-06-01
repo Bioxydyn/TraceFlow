@@ -19,6 +19,7 @@ def get_install_requires() -> list[str]:
         "latex==0.7.0",
         "cairosvg==2.7.0",
         "Jinja2==3.1.2",
+        "pyyaml==6.0",
     ]
 
 

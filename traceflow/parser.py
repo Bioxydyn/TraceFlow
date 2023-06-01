@@ -2,7 +2,9 @@ import os
 from typing import Union, List, Generic, TypeVar, Callable
 from dataclasses import dataclass
 from pprint import pprint
+
 import mistune
+import yaml
 
 
 @dataclass
@@ -127,6 +129,7 @@ class Document:
     tests: list[TestDocument]
     name: str = ""
     input_dir: str = ""
+    version: str = ""
 
 
 def read_file(file_path: str) -> str:
@@ -140,7 +143,7 @@ def parse_markdown(content: str) -> list[dict]:
     return markdown_parser(content)
 
 
-def process_directory(directory: str) -> Document:
+def process_directory(directory: str, version: str) -> Document:
     requirements = []
     tests = []
     for root, dirs, files in os.walk(directory):
@@ -160,7 +163,17 @@ def process_directory(directory: str) -> Document:
                     )
                     continue
     absolute_dir_path = os.path.abspath(directory)
-    return Document(requirements=requirements, tests=tests, name=directory, input_dir=absolute_dir_path)
+
+    # Check if config.yml exists in the directory
+    config_file_path = os.path.join(absolute_dir_path, "config.yml")
+    name = directory
+    if os.path.exists(config_file_path):
+        with open(config_file_path, "r") as config_file:
+            config = yaml.safe_load(config_file)
+            if "name" in config:
+                name = config["name"]
+                print(f"Found name in config.yml: {name}")
+    return Document(requirements=requirements, tests=tests, name=name, input_dir=absolute_dir_path, version=version)
 
 
 def is_ast_element_heading(elem: dict) -> int:

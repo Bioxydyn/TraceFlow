@@ -2,7 +2,7 @@
 \usepackage[T1]{fontenc}
 
 \usepackage{geometry}
-\geometry{verbose,tmargin=3.0cm,bmargin=2.0cm,lmargin=0.5cm,rmargin=0.5cm,headheight=38pt}
+\geometry{verbose,tmargin=3.0cm,bmargin=2.0cm,lmargin=1.5cm,rmargin=1.5cm,headheight=38pt}
 \renewcommand{\familydefault}{\sfdefault}
 
 \usepackage{tabularx} % in the preamble
@@ -10,7 +10,7 @@
 \usepackage{hhline}
 \usepackage{amssymb}
 \usepackage{listings}
-
+\usepackage{multirow}
 \usepackage{fancyhdr}
 \makeatletter
 \makeatother
@@ -40,7 +40,7 @@
 
 \newlength\colW \setlength\colW{0.096\columnwidth}
 
-% Command hatch takes 5 args. Arg 1 = index into the HachtedCell command after table, arg 2 = width of cell in cols, 
+% Command hatch takes 5 args. Arg 1 = index into the HachtedCell command after table, arg 2 = width of cell in cols,
 % arg 3 = the cell contents, args 4 & 5 are the cell side wall specifies, e.g. {|}{}
 \newcommand*{\hatch}[5]{\multicolumn{#2}{#4!{\hspace*{-0.4pt}\tikzmark{start#1}} c !{\tikzmark{end#1}}#5}{#3}}
 \newcommand*{\cellnormal}[4]{\multicolumn{#1}{#3 l #4}{#2}}
@@ -54,7 +54,7 @@
 \newcommand*{\positivecheck}{\hspace{0.2cm}\makebox[0pt][l]{$\square$}\raisebox{.15ex}{\hspace{0.1em}$\checkmark$}\hspace{0.8cm}}
 \newcommand*{\negativecheck}{\hspace{0.2cm}\makebox[0pt][l]{$\square$}{$\times$}\hspace{0.8cm}}
 
-
+\title{\VAR{report_title}}
 \begin{document}
 
 \setlength{\topmargin}{-56pt}
@@ -67,7 +67,7 @@
 	\includegraphics[width=4cm,keepaspectratio]{traceflow-logo.png}
 	}
 	\fancyhead[R]{
-        \textbf{\Large{VoxelFlow Validation Pack}}
+        \textbf{\Large{\VAR{report_title}}}
     }
 	\lfoot{
 	\includegraphics[width=3cm,keepaspectratio]{voxelflow-logo.png}
@@ -78,4 +78,70 @@
 	\renewcommand{\footrulewidth}{0.4pt}
 }
 \pagestyle{plain}% Set page style to plain.
+\maketitle
 
+\begin{table}[h]
+\renewcommand{\arraystretch}{2} % Increases the height of each row
+\arrayrulecolor{gray} % Set the color of the horizontal and vertical lines to gray
+\begin{tabular}{|>{\columncolor{gray!30}}m{0.45\linewidth}|m{0.45\linewidth}|}
+\hline
+\textbf{Version under test} & \\
+\hline
+\textbf{Engineer} & \\
+\hline
+\textbf{Tester} & \\
+\hline
+\textbf{Test Date} & \\
+\hline
+\textbf{Initial Report Generation Date} & \date{\today} \\
+\hline
+\textbf{Result} & \\
+\hline
+\textbf{Approved Usage} \vspace*{2\baselineskip} & \\ % Add vertical space within this cell
+\hline
+\end{tabular}
+\end{table}
+
+\vspace{1cm}
+
+
+\begin{minipage}{0.45\textwidth}
+\large % Increase the font size
+\setlength{\baselineskip}{20pt} % Increase the line spacing
+\noindent \textbf{Manual tests carried out by:}
+
+\noindent \rule{6cm}{0.4pt} \\
+\noindent Signature
+
+\noindent \rule{6cm}{0.4pt} \\
+\noindent Name
+
+\noindent \rule{6cm}{0.4pt} \\
+\noindent Job Title
+
+\noindent \rule{6cm}{0.4pt} \\
+\noindent Date
+\end{minipage}
+\hfill
+\begin{minipage}{0.45\textwidth}
+\large % Increase the font size
+\setlength{\baselineskip}{20pt} % Increase the line spacing
+\noindent \textbf{Validation pack result approved by:}
+
+\noindent \rule{6cm}{0.4pt} \\
+\noindent Signature
+
+\noindent \rule{6cm}{0.4pt} \\
+\noindent Name
+
+\noindent \rule{6cm}{0.4pt} \\
+\noindent Job Title
+
+\noindent \rule{6cm}{0.4pt} \\
+\noindent Date
+\end{minipage}
+
+
+\newpage
+\tableofcontents
+\newpage

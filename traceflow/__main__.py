@@ -7,14 +7,15 @@ def main():
     # First command line arg is the directory to process
     # Second is the output file path
 
-    if len(sys.argv) < 3:
-        print("Usage: traceflow <directory> <output>")
+    if len(sys.argv) < 4:
+        print("Usage: traceflow <directory> <version> <output>")
         sys.exit(1)
 
     directory = sys.argv[1]
-    output = sys.argv[2]
+    version = sys.argv[2]
+    output = sys.argv[3]
 
-    document: Document = process_directory(directory)
+    document: Document = process_directory(directory, version=version)
     report: PdfReport = PdfReport(document)
     output_file: bytes = report.render()
 
