@@ -98,7 +98,7 @@ def md_to_latex(items: list[dict]) -> str:
         return r"""
 \noindent
 \begin{Form}
-\textbf{Pass} \CheckBox[name=pass]{} \hspace{2cm} \textbf{Fail} \CheckBox[name=fail]{} \\
+\textbf{Pass} \CheckBox[name=pass]{} \hspace{2cm} \textbf{Fail} \CheckBox[name=fail]{} \hspace{2cm} \textbf{Skip} \CheckBox[name=fail]{} \\
 \vspace{0.2cm}
 \textbf{Comments} \\
 \TextField[name=comments, multiline=true, width=\linewidth, height=2cm]{}
