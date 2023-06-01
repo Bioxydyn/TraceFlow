@@ -94,12 +94,14 @@ def md_to_latex(items: list[dict]) -> str:
 
         if code_type == "mermaid":
             return handle_mermaid(item)
+        if code_type == "raw":
+            return item["text"]
         elif code_type == "manualtest":
             return handle_manual_test(item)
         else:
             return handle_code(item)
 
-    def handle_manual_test(item: dict) -> str:
+    def handle_manual_test(_: dict) -> str:
         pass_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
         fail_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
         skip_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
