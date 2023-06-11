@@ -286,6 +286,43 @@ class PdfReport():
                 document += "\\section{" + req_page.title + "}\\label{" + req_page.title + "}\n\n"
                 document += self.md_to_latex(req_page.generic_content)
 
+                # Display the traceability matrix
+                document += "\\subsection{Traceability Matrix}\n\n"
+
+                # Create the table data
+                columns: list[str] = []
+
+                for requirement in req_page.items:
+                    if requirement.test_ids is not None:
+                        columns += requirement.test_ids
+                columns = list(set(columns))
+                print(f"Building traceability matrix for: {columns}")
+                # Build the table. There should be a tick in the cell if the test is linked to the requirement,
+                # otherwise it should be empty
+                document += "\\begin{table}[h]\n"
+                document += "\\centering\n"
+                document += "\\caption{Traceability Matrix}\n"
+                document += "\\begin{tabular}{|c|" + "c"*len(columns) + "|}\n"
+                document += "\\hline\n"
+
+                # Header row with test ids
+                header = "Req \\ Test ID & " + " & ".join(columns) + " \\\\\n\\hline\n"
+                document += header
+
+                # For each requirement, generate a row
+                for r in req_page.items:
+                    row = r.req_id
+                    for test_id in columns:
+                        if test_id in r.test_ids:
+                            row += " & $\\checkmark$"
+                        else:
+                            row += " & "
+                    row += " \\\\\n\\hline\n"
+                    document += row
+
+                document += "\\end{tabular}\n"
+                document += "\\end{table}\n\n"
+
                 for requirement in req_page.items:
                     document += "\\subsection{" + process_text(requirement.req_id + ": " + requirement.title) + "}"
                     document += "\\label{" + requirement.req_id + "}\n\n"

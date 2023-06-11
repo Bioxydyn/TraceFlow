@@ -1,5 +1,5 @@
 import os
-from typing import Union, List, Generic, TypeVar, Callable, Type
+from typing import Union, List, Generic, TypeVar, Callable, Type, Optional
 from dataclasses import dataclass
 
 import mistune
@@ -11,6 +11,7 @@ class Requirement:
     req_id: str
     content: list[dict]
     title: str
+    test_ids: Optional[list[str]] = None
 
 
 @dataclass
@@ -90,6 +91,22 @@ class RequirementDocument(SubDocument[Requirement]):
 
 
 class TestDocument(SubDocument[Test]):
+
+    @staticmethod
+    def extract_requirement_ids(content_item: dict) -> list[str]:
+        if content_item["type"] != "paragraph":
+            return []
+        children = content_item["children"]
+        requirements = []
+        for index in range(len(children)):
+            child = children[index]
+
+            if child["type"] == "strong":
+                if child["children"][0]["text"] == "Requirement ID:":
+                    # The text of the next element is the requirement ID
+                    requirements.append(children[index + 1]["text"].strip())
+        return requirements
+
     @staticmethod
     def item_generator(parsed_content: list[dict]) -> list[Test]:
         tests: list[Test] = []
@@ -105,6 +122,8 @@ class TestDocument(SubDocument[Test]):
             else:
                 if current_test.test_id != "":
                     current_test.content.append(elem)
+                    current_test.req_ids += TestDocument.extract_requirement_ids(elem)
+                    print(current_test.req_ids)
         if len(current_test.content) > 0:
             tests.append(current_test)
         return tests
@@ -134,8 +153,19 @@ class Document:
             duplicates = [i for i in all_ids if all_ids.count(i) > 1]
             raise ValueError(f"Duplicate IDs found: {duplicates}")
 
+    def build_traceability_matrices(self) -> None:
+        for requirement_doc in self.requirements:
+            for r in requirement_doc.items:
+                r_id = r.req_id
+                r.test_ids = []
+                for test_doc in self.tests:
+                    for t in test_doc.items:
+                        if r_id in t.req_ids:
+                            r.test_ids.append(t.test_id)
+
     def __post_init__(self) -> None:
         self.verify_all_ids_unique()
+        self.build_traceability_matrices()
 
 
 def read_file(file_path: str) -> str:
