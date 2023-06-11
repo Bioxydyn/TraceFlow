@@ -1,12 +1,11 @@
 import os
-import subprocess
+import subprocess  # noqa S404
 import tempfile
 from contextlib import contextmanager
 import shutil
 from pkgutil import get_data
 import random
 import string
-import json
 
 import latex.jinja2
 import cairosvg
@@ -18,7 +17,7 @@ _latex_jinja2_env = latex.jinja2.make_env()
 
 
 @contextmanager
-def isolated_filesystem(temp_path: str = None):
+def isolated_filesystem(temp_path: str = None) -> None:
     current_directory = os.getcwd()
 
     user_specified_path = False
@@ -57,8 +56,7 @@ def md_to_latex(items: list[dict]) -> str:
 
     def handle_heading(item: dict) -> str:
         level = item["level"]
-        heading = "\\" + "sub" * (level - 1) + "section{" + process_text(item["children"][0]["text"]) + "}"
-        return heading
+        return "\\" + "sub" * (level - 1) + "section{" + process_text(item["children"][0]["text"]) + "}"
 
     def handle_list(item: dict) -> str:
         latex = ["\\begin{itemize}"]
@@ -96,17 +94,16 @@ def md_to_latex(items: list[dict]) -> str:
             return handle_mermaid(item)
         if code_type == "raw":
             return item["text"]
-        elif code_type == "manualtest":
+        if code_type == "manualtest":
             return handle_manual_test(item)
-        else:
-            return handle_code(item)
+        return handle_code(item)
 
     def handle_manual_test(_: dict) -> str:
-        pass_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
-        fail_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
-        skip_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
-        comment_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
-        return r"""
+        pass_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))  # noqa S311
+        fail_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))  # noqa S311
+        skip_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))  # noqa S311
+        comment_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))  # noqa S311
+        return r"""  # noqa E501
 \noindent
 \begin{Form}
 \textbf{Pass} \CheckBox[name=""" + pass_id + r"""]{} \hspace{2cm} \textbf{Fail} \CheckBox[name=""" + fail_id + r"""]{} \hspace{2cm} \textbf{Skip} \CheckBox[name=""" + skip_id + r"""]{} \\
@@ -124,8 +121,7 @@ def md_to_latex(items: list[dict]) -> str:
 
         if language:
             return f"\\begin{{lstlisting}}[language={language}]\n{code_content}\n\\end{{lstlisting}}"
-        else:
-            return f"\\begin{{lstlisting}}\n{code_content}\n\\end{{lstlisting}}"
+        return f"\\begin{{lstlisting}}\n{code_content}\n\\end{{lstlisting}}"
 
     def handle_mermaid(item: dict) -> str:
         with tempfile.NamedTemporaryFile(suffix='.svg', delete=False) as svg_file:
@@ -136,17 +132,15 @@ def md_to_latex(items: list[dict]) -> str:
             mmd_file.write(mermaid_code)
             mmd_path = mmd_file.name
 
-        subprocess.run(["mmdc", "-i", mmd_path, "-o", svg_path], check=True)
+        subprocess.run(["mmdc", "-i", mmd_path, "-o", svg_path], check=True)  # noqa S607, S603
 
         os.remove(mmd_path)
 
-        # Convert the SVG to PDF
+        # Convert the SVG to PDF
         pdf_path = svg_path.replace(".svg", ".pdf")
         cairosvg.svg2pdf(url=svg_path, write_to=pdf_path)
         os.remove(svg_path)
-        latex = handle_image({"src": pdf_path, "alt": "", "title": "", "type": "image"})
-
-        return latex
+        return handle_image({"src": pdf_path, "alt": "", "title": "", "type": "image"})
 
     def handle_item(item: dict) -> str:
         handlers = {
@@ -163,9 +157,8 @@ def md_to_latex(items: list[dict]) -> str:
         handler = handlers.get(item["type"])
         if handler:
             return handler(item)
-        else:
-            print(f"Unknown item type: {item['type']}")
-            print(item)
+        print(f"Unknown item type: {item['type']}")
+        print(item)
         return ""
 
     latex = []
@@ -176,7 +169,7 @@ def md_to_latex(items: list[dict]) -> str:
 
 class PdfReport():
     @staticmethod
-    def get_global_tex_vars():
+    def get_global_tex_vars() -> dict[str, str]:
         return {"version": __version__}
 
     @staticmethod
@@ -196,8 +189,7 @@ class PdfReport():
         tex_vars["report_title"] = process_text(self.document.name + " " + self.document.version + ": Validation Pack")
         document = header.render(**tex_vars)
 
-        output = b""
-        # Create the "report" directory if it doesn't exist
+        # Create the "report" directory if it doesn't exist
         if not os.path.exists("report"):
             os.mkdir("report")
 
@@ -212,7 +204,7 @@ class PdfReport():
                     document += md_to_latex(requirement.content)
                     document += "\n\n"
 
-                # Add a page break
+                # Add a page break
                 document += "\\newpage\n\n"
 
             for page in self.document.tests:
@@ -224,7 +216,7 @@ class PdfReport():
                     document += md_to_latex(test.content)
                     document += "\n\n"
 
-                # Add a page break
+                # Add a page break
                 document += "\\newpage\n\n"
 
             document += r"%%%%%%%%%%% END DOCUMENT" + "\n\n" r"\label{LastPage}" + "\n\n" + r"\end{document}" + "\n"
@@ -236,7 +228,7 @@ class PdfReport():
 
             # Recursively copy all files from the document.input_dir folder to the current folder
             print("Copying files from", self.document.input_dir, "to", os.getcwd())
-            for root, dirs, files in os.walk(self.document.input_dir):
+            for root, _, files in os.walk(self.document.input_dir):
                 for filename in files:
                     shutil.copy(os.path.join(root, filename), filename)
 
@@ -271,7 +263,4 @@ class PdfReport():
             output_pdf = os.path.splitext(output_filename)[0] + ".pdf"
 
             with open(output_pdf, "rb") as out:
-                output = out.read()
-
-        return output
-
+                return out.read()

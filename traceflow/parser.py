@@ -1,7 +1,6 @@
 import os
 from typing import Union, List, Generic, TypeVar, Callable
 from dataclasses import dataclass
-from pprint import pprint
 
 import mistune
 import yaml
@@ -13,13 +12,6 @@ class Requirement:
     content: list[dict]
     title: str
 
-    def print(self) -> str:
-        print(f"Requirement {self.req_id}: {self.title}\n")
-        for elem in self.content:
-            pprint(elem)
-            print("\n")
-        print("\n")
-
 
 @dataclass
 class Test:
@@ -27,13 +19,6 @@ class Test:
     content: list[dict]
     title: str
     req_ids: list[str]
-
-    def print(self) -> str:
-        print(f"Test {self.test_id}: {self.title}\n")
-        for elem in self.content:
-            pprint(elem)
-            print("\n")
-        print("\n")
 
 
 @dataclass
@@ -45,6 +30,7 @@ class Design:
     def get_referenced_requirement_ids() -> list[str]:
         """ A list of requirement IDs that are present in the description """
         ...
+
     def get_referenced_test_ids() -> list[str]:
         """ A list of test IDs that are present in the description """
         ...
@@ -59,11 +45,6 @@ class SubDocument(Generic[T]):
     filename: str
     items: List[T]
 
-    def print(self) -> None:
-        print(f"Document {self.title} ({self.filename})\n")
-        for item in self.items:
-            print(item)
-
     @staticmethod
     def from_file(file_path: str, item_generator: Callable[list[dict], list[T]]) -> 'SubDocument[T]':
         content = read_file(file_path)
@@ -71,6 +52,7 @@ class SubDocument(Generic[T]):
         title = extract_title(parsed_content)
         items = item_generator(parsed_content)
         return SubDocument(title=title, filename=file_path, items=items)
+
 
 class RequirementDocument(SubDocument[Requirement]):
     @staticmethod
@@ -133,19 +115,23 @@ class Document:
 
     def verify_all_ids_unique(self) -> None:
         """ Check if all IDs (both test and requirement) are unique """
-        all_ids: list[str] =  [req.req_id for r in self.requirements for req in r.items] + \
-            [test.test_id for t in self.tests for test in t.items]
+        all_ids: list[str] = (
+            [req.req_id for r in self.requirements for req in r.items]
+            + [test.test_id for t in self.tests for test in t.items]
+        )
 
         if len(all_ids) != len(set(all_ids)):
             # There are duplicates - what are they?
-            duplicates = [id for id in all_ids if all_ids.count(id) > 1]
+            duplicates = [i for i in all_ids if all_ids.count(i) > 1]
             raise ValueError(f"Duplicate IDs found: {duplicates}")
+
+    def __post_init__(self) -> None:
+        self.verify_all_ids_unique()
 
 
 def read_file(file_path: str) -> str:
     with open(file_path, "r") as file:
-        content = file.read()
-    return content
+        return file.read()
 
 
 def parse_markdown(content: str) -> list[dict]:
@@ -156,7 +142,7 @@ def parse_markdown(content: str) -> list[dict]:
 def process_directory(directory: str, version: str) -> Document:
     requirements = []
     tests = []
-    for root, dirs, files in os.walk(directory):
+    for root, _, files in os.walk(directory):
         for file in files:
             if file.endswith(".md"):
                 file_path = os.path.join(root, file)

@@ -3,10 +3,8 @@ import sys
 from traceflow.parser import process_directory, Document
 from traceflow.pdf_generator import PdfReport
 
-def main():
-    # First command line arg is the directory to process
-    # Second is the output file path
 
+def main() -> int:
     if len(sys.argv) < 4:
         print("Usage: traceflow <directory> <version> <output>")
         sys.exit(1)
@@ -21,3 +19,4 @@ def main():
 
     with open(output, "wb") as f:
         f.write(output_file)
+    return 0
