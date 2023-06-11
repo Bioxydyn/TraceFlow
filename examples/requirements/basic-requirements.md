@@ -1,5 +1,7 @@
 # Requirements
 
+These are some general notes on this set of requirements. Other content within subsections are for specific requirements.
+
 ## REQ-001: User authentication
 
 Users must be able to authenticate using their email address and a password.

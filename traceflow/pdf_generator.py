@@ -48,67 +48,151 @@ def process_text(text: str) -> str:
     return text.replace(r"&", r"\&").replace(r"_", r"\_")
 
 
-def md_to_latex(items: list[dict]) -> str:
+class PdfReport():
 
-    def handle_paragraph(item: dict) -> str:
-        latex = ["\n"]
-        for child in item["children"]:
-            if child["type"] == "text":
-                latex.append(process_text(child["text"]))
-            else:
-                latex.append(handle_item(child))
-        return "".join(latex)
+    def md_to_latex(self, items: list[dict]) -> str:
 
-    def handle_heading(item: dict) -> str:
-        level = item["level"]
-        return "\\" + "sub" * (level - 1) + "section{" + process_text(item["children"][0]["text"]) + "}"
-
-    def handle_list(item: dict) -> str:
-        latex = ["\\begin{itemize}"]
-        for list_item in item["children"]:
-            latex.append("\n\\item ")
-            for child in list_item["children"]:
+        def handle_paragraph(item: dict) -> str:
+            latex = ["\n"]
+            for child in item["children"]:
                 if child["type"] == "text":
                     latex.append(process_text(child["text"]))
-                if child["type"] == "block_text":
-                    try:
-                        latex.append(process_text(child["children"][0]["text"]))
-                    except IndexError:
-                        print("Warning, empty block text:", child)
+                else:
+                    latex.append(handle_item(child))
+            return "".join(latex)
 
-        latex.append("\n\\end{itemize}")
-        return "".join(latex)
+        def handle_heading(item: dict) -> str:
+            level = item["level"]
+            return "\\" + "sub" * (level - 1) + "section{" + process_text(item["children"][0]["text"]) + "}"
 
-    def handle_image(item: dict) -> str:
-        url = item["src"]
-        latex = [
-            '\n\\begin{figure}[h]',
-            '\n\\centering',
-            f'\n\\includegraphics[width=0.5\\textwidth]{{{url}}}',
-            f'\n\\caption{{{process_text(item["alt"])}}}',
-            '\n\\end{figure}',
-        ]
-        return ''.join(latex)
+        def handle_list(item: dict) -> str:
+            latex = ["\\begin{itemize}"]
+            for list_item in item["children"]:
+                latex.append("\n\\item ")
+                for child in list_item["children"]:
+                    if child["type"] == "text":
+                        latex.append(process_text(child["text"]))
+                    if child["type"] == "block_text":
+                        try:
+                            latex.append(process_text(child["children"][0]["text"]))
+                        except IndexError:
+                            print("Warning, empty block text:", child)
 
-    def handle_block_code(item: dict) -> str:
-        code_type = None
-        if "info" in item:
-            code_type = item["info"]
+            latex.append("\n\\end{itemize}")
+            return "".join(latex)
 
-        if code_type == "mermaid":
-            return handle_mermaid(item)
-        if code_type == "raw":
-            return item["text"]
-        if code_type == "manualtest":
-            return handle_manual_test(item)
-        return handle_code(item)
+        def handle_image(item: dict) -> str:
+            url = item["src"]
+            latex = [
+                '\n\\begin{figure}[h]',
+                '\n\\centering',
+                f'\n\\includegraphics[width=0.5\\textwidth]{{{url}}}',
+                f'\n\\caption{{{process_text(item["alt"])}}}',
+                '\n\\end{figure}',
+            ]
+            return ''.join(latex)
 
-    def handle_manual_test(_: dict) -> str:
-        pass_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))  # noqa S311
-        fail_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))  # noqa S311
-        skip_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))  # noqa S311
-        comment_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))  # noqa S311
-        return r"""  # noqa E501
+        def handle_block_code(item: dict) -> str:
+            code_type = None
+            if "info" in item:
+                code_type = item["info"]
+
+            if code_type == "mermaid":
+                return handle_mermaid(item)
+            if code_type == "raw":
+                return item["text"]
+            if code_type == "manualtest":
+                return handle_manual_test(item)
+            if code_type == "testcoverpage":
+                return handle_test_cover_page(item)
+            if code_type == "autotest":
+                return handle_auto_test(item)
+            return handle_code(item)
+
+        def handle_test_cover_page(_: dict) -> str:
+            return r"""
+\begin{table}[h]
+\renewcommand{\arraystretch}{2} % Increases the height of each row
+\arrayrulecolor{gray} % Set the color of the horizontal and vertical lines to gray
+\begin{tabular}{|>{\columncolor{gray!30}}m{0.45\linewidth}|m{0.45\linewidth}|}
+\hline
+\textbf{Tester} & \\
+\hline
+\textbf{Test Date} & \\
+\hline
+\textbf{Result} & \\
+\hline
+\textbf{Observations} \vspace*{3\baselineskip} & \\ % Add vertical space within this cell
+\hline
+\end{tabular}
+\end{table}
+
+\vspace{1cm}
+\newpage
+
+"""
+
+        def handle_auto_test(item: dict) -> str:
+            content: str = item["text"]
+            assert content is not None
+            assert isinstance(content, str)
+
+            # Content is a script, to be executed. We need to capture the exit code and the stdout & stderr. We classify
+            # the test as a pass if the exit code is 0, and a fail otherwise. We also capture the stdout and stderr and
+            # include them in the report, in full colour using ANSI escape codes.
+
+            # 1. Write the script to a temporary file
+            script_filename = PdfReport.get_temporary_filename(suffix=".sh", force_random=True)
+            # Get the full path to the script file
+            script_filename = os.path.join(os.getcwd(), script_filename)
+            with open(script_filename, "w") as f:
+                f.write(content)
+
+            # 2. Execute the script
+            content_summary = content.strip().split("\n")[0]
+            print(f"Executing test: {content_summary}")
+            current_directory = os.getcwd()
+            try:
+                os.chdir(self.original_working_directory)
+                output = subprocess.check_output(["bash", script_filename], stderr=subprocess.STDOUT)  # noqa S603, S607
+                exit_code = 0
+            except subprocess.CalledProcessError as e:
+                output = e.output
+                exit_code = e.returncode
+            finally:
+                os.chdir(current_directory)
+
+            # 3. Convert the output to a string
+            output_str: str = output.decode("utf-8")
+
+            if exit_code != 0:
+                print(f"Test failed: {content_summary}")
+                print(output_str)
+
+            if len(output_str) > 40000:
+                output_str = output_str[:40000] + " ... [truncated]"
+
+            def create_latex_markup(is_pass: bool) -> str:
+                if is_pass:
+                    return r"""\textbf{Pass} \CheckedBox \hspace{2cm} \textbf{Fail} \Square \hspace{2cm} \textbf{Skip} \Square \\
+"""  # noqa E501
+                return r"""\textbf{Pass} \Square \hspace{2cm} \textbf{Fail} \CheckedBox \hspace{2cm} \textbf{Skip} \Square \\
+"""  # noqa E501
+
+            return r"""
+\noindent
+""" + create_latex_markup(is_pass=exit_code == 0) + "\n" + r"""
+\vspace{0.2cm}
+\begin{lstlisting}[language=bash, basicstyle=\ttfamily\small, breaklines=true, breakatwhitespace=true, showstringspaces=false, escapeinside={(*}{*)}]
+""" + output_str + "\n" + r"""
+\end{lstlisting}"""  # noqa E501
+
+        def handle_manual_test(_: dict) -> str:
+            pass_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))  # noqa S311
+            fail_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))  # noqa S311
+            skip_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))  # noqa S311
+            comment_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))  # noqa S311
+            return r"""
 \noindent
 \begin{Form}
 \textbf{Pass} \CheckBox[name=""" + pass_id + r"""]{} \hspace{2cm} \textbf{Fail} \CheckBox[name=""" + fail_id + r"""]{} \hspace{2cm} \textbf{Skip} \CheckBox[name=""" + skip_id + r"""]{} \\
@@ -116,73 +200,71 @@ def md_to_latex(items: list[dict]) -> str:
 \textbf{Comments} \\
 \TextField[name=""" + comment_id + r""", multiline=true, width=\linewidth, height=2cm]{}
 \end{Form}
-        """
+        """  # noqa E501
 
-    def handle_code(item: dict) -> str:
-        language = None
-        if "info" in item:
-            language = item["info"]
-        code_content = item["text"]
+        def handle_code(item: dict) -> str:
+            language = None
+            if "info" in item:
+                language = item["info"]
+            code_content = item["text"]
 
-        if language:
-            return f"\\begin{{lstlisting}}[language={language}]\n{code_content}\n\\end{{lstlisting}}"
-        return f"\\begin{{lstlisting}}\n{code_content}\n\\end{{lstlisting}}"
+            if language:
+                return f"\\begin{{lstlisting}}[language={language}]\n{code_content}\n\\end{{lstlisting}}"
+            return f"\\begin{{lstlisting}}\n{code_content}\n\\end{{lstlisting}}"
 
-    def handle_mermaid(item: dict) -> str:
-        with tempfile.NamedTemporaryFile(suffix='.svg', delete=False) as svg_file:
-            svg_path = svg_file.name
+        def handle_mermaid(item: dict) -> str:
 
-        mermaid_code = item["text"]
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".mmd", delete=False) as mmd_file:
-            mmd_file.write(mermaid_code)
-            mmd_path = mmd_file.name
+            svg_path = PdfReport.get_temporary_filename(suffix=".svg", force_random=True)
+            mmd_path = PdfReport.get_temporary_filename(suffix=".mmd", force_random=True)
 
-        subprocess.run(["mmdc", "-i", mmd_path, "-o", svg_path], check=True)  # noqa S607, S603
+            mermaid_code = item["text"]
+            with open(mmd_path, "w") as mmd_file:
+                mmd_file.write(mermaid_code)
 
-        os.remove(mmd_path)
+            subprocess.run(["mmdc", "-i", mmd_path, "-o", svg_path], check=True)  # noqa S607, S603
 
-        # Convert the SVG to PDF
-        pdf_path = svg_path.replace(".svg", ".pdf")
-        cairosvg.svg2pdf(url=svg_path, write_to=pdf_path)
-        os.remove(svg_path)
-        return handle_image({"src": pdf_path, "alt": "", "title": "", "type": "image"})
+            # Convert the SVG to PDF
+            pdf_path = svg_path.replace(".svg", ".pdf")
+            cairosvg.svg2pdf(url=svg_path, write_to=pdf_path)
+            return handle_image({"src": pdf_path, "alt": "", "title": "", "type": "image"})
 
-    def handle_item(item: dict) -> str:
-        handlers = {
-            "paragraph": handle_paragraph,
-            "heading": handle_heading,
-            "list": handle_list,
-            "image": handle_image,
-            "block_code": handle_block_code,
-            "blank_line": lambda _: "\n",
-            "strong": lambda item: f"\\textbf{{{process_text(item['children'][0]['text'])}}}",
-            "softbreak": lambda _: "\n",
-            "codespan": lambda item: f"\\texttt{{{process_text(item['text'])}}}",
-        }
-        handler = handlers.get(item["type"])
-        if handler:
-            return handler(item)
-        print(f"Unknown item type: {item['type']}")
-        print(item)
-        return ""
+        def handle_item(item: dict) -> str:
+            handlers = {
+                "paragraph": handle_paragraph,
+                "heading": handle_heading,
+                "list": handle_list,
+                "image": handle_image,
+                "block_code": handle_block_code,
+                "blank_line": lambda _: "\n",
+                "strong": lambda item: f"\\textbf{{{process_text(item['children'][0]['text'])}}}",
+                "softbreak": lambda _: "\n",
+                "codespan": lambda item: f"\\texttt{{{process_text(item['text'])}}}",
+            }
+            handler = handlers.get(item["type"])
+            if handler:
+                return handler(item)
+            print(f"Unknown item type: {item['type']}")
+            print(item)
+            return ""
 
-    latex = []
-    for item in items:
-        latex.append(handle_item(item))
-    return "\n".join(latex)
+        latex = []
+        for item in items:
+            latex.append(handle_item(item))
+        return "\n".join(latex)
 
-
-class PdfReport():
     @staticmethod
     def get_global_tex_vars() -> dict[str, str]:
         return {"version": __version__}
 
     @staticmethod
-    def get_temporary_filename(suffix: str = ".temp") -> str:
+    def get_temporary_filename(suffix: str = ".temp", force_random: bool = False) -> str:
+        if os.getenv("TRACEFLOW_TESTING") and not force_random:
+            return "test" + suffix
         return "".join(random.choices(string.ascii_uppercase, k=10)) + suffix # noqa S311
 
     def __init__(self, document: Document):
         self.document = document
+        self.original_working_directory = os.getcwd()
 
     def render(self) -> bytes:
 
@@ -201,23 +283,25 @@ class PdfReport():
         with isolated_filesystem("report"):
 
             for req_page in self.document.requirements:
-                document += "\\section{" + req_page.title + "}\n\n"
+                document += "\\section{" + req_page.title + "}\\label{" + req_page.title + "}\n\n"
+                document += self.md_to_latex(req_page.generic_content)
 
                 for requirement in req_page.items:
                     document += "\\subsection{" + process_text(requirement.req_id + ": " + requirement.title) + "}"
                     document += "\\label{" + requirement.req_id + "}\n\n"
-                    document += md_to_latex(requirement.content)
+                    document += self.md_to_latex(requirement.content)
                     document += "\n\n"
 
                 document += "\\newpage\n\n"
 
             for test_page in self.document.tests:
-                document += "\\section{" + test_page.title + "}\n\n"
+                document += "\\section{" + test_page.title + "}\\label{" + test_page.title + "}\n\n"
+                document += self.md_to_latex(test_page.generic_content)
 
                 for test in test_page.items:
                     document += "\\subsection{" + process_text(test.test_id + ": " + test.title) + "}"
                     document += "\\label{" + test.test_id + "}\n\n"
-                    document += md_to_latex(test.content)
+                    document += self.md_to_latex(test.content)
                     document += "\n\n"
 
                 document += "\\newpage\n\n"

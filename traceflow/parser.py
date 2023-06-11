@@ -43,6 +43,7 @@ C = TypeVar('C', bound='SubDocument')
 @dataclass
 class SubDocument(Generic[T]):
     title: str
+    generic_content: list[dict]
     filename: str
     items: List[T]
 
@@ -50,9 +51,16 @@ class SubDocument(Generic[T]):
     def from_file_impl(cls: Type[C], file_path: str, item_generator: Callable[[list[dict]], list[T]]) -> C:
         content = read_file(file_path)
         parsed_content = parse_markdown(content)
+        generic_content = []
+        for elem in parsed_content:
+            if is_ast_element_heading(elem) == 2:
+                break
+            if not is_ast_element_heading(elem) == 1:
+                generic_content.append(elem)
         title = extract_title(parsed_content)
         items = item_generator(parsed_content)
-        return cls(title=title, filename=file_path, items=items)
+
+        return cls(title=title, generic_content=generic_content, filename=file_path, items=items)
 
 
 class RequirementDocument(SubDocument[Requirement]):
