@@ -29,12 +29,11 @@ class Design:
 
     def get_referenced_requirement_ids(self) -> list[str]:
         """ A list of requirement IDs that are present in the description """
-        ...
+        raise NotImplementedError
 
     def get_referenced_test_ids(self) -> list[str]:
         """ A list of test IDs that are present in the description """
-        ...
-
+        raise NotImplementedError
 
 T = TypeVar('T', bound=Union['Requirement', 'Test'])
 C = TypeVar('C', bound='SubDocument')
