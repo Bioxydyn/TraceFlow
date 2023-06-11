@@ -6,6 +6,7 @@ import shutil
 from pkgutil import get_data
 import random
 import string
+from typing import Generator, Optional
 
 import latex.jinja2
 import cairosvg
@@ -16,17 +17,21 @@ from traceflow.version import __version__
 _latex_jinja2_env = latex.jinja2.make_env()
 
 
+def load_resource(package: str, filename: str) -> bytes:
+    data = get_data(package, filename)
+    assert data is not None
+    return data
+
+
 @contextmanager
-def isolated_filesystem(temp_path: str = None) -> None:
+def isolated_filesystem(temp_path: Optional[str] = None) -> Generator:
     current_directory = os.getcwd()
 
-    user_specified_path = False
-
-    if temp_path is not None:
-        user_specified_path = True
+    user_specified_path = temp_path is not None
 
     if not user_specified_path:
         temp_path = tempfile.mkdtemp()
+    assert temp_path is not None
 
     try:
         os.chdir(temp_path)
@@ -182,7 +187,7 @@ class PdfReport():
     def render(self) -> bytes:
 
         header = _latex_jinja2_env.from_string(
-            get_data("traceflow.res", "report-header.tex").decode("utf-8")
+            load_resource("traceflow.res", "report-header.tex").decode("utf-8")
         )
 
         tex_vars = self.get_global_tex_vars()
@@ -195,36 +200,34 @@ class PdfReport():
 
         with isolated_filesystem("report"):
 
-            for page in self.document.requirements:
-                document += "\\section{" + page.title + "}\n\n"
+            for req_page in self.document.requirements:
+                document += "\\section{" + req_page.title + "}\n\n"
 
-                for requirement in page.items:
+                for requirement in req_page.items:
                     document += "\\subsection{" + process_text(requirement.req_id + ": " + requirement.title) + "}"
                     document += "\\label{" + requirement.req_id + "}\n\n"
                     document += md_to_latex(requirement.content)
                     document += "\n\n"
 
-                # Add a page break
                 document += "\\newpage\n\n"
 
-            for page in self.document.tests:
-                document += "\\section{" + page.title + "}\n\n"
+            for test_page in self.document.tests:
+                document += "\\section{" + test_page.title + "}\n\n"
 
-                for test in page.items:
+                for test in test_page.items:
                     document += "\\subsection{" + process_text(test.test_id + ": " + test.title) + "}"
                     document += "\\label{" + test.test_id + "}\n\n"
                     document += md_to_latex(test.content)
                     document += "\n\n"
 
-                # Add a page break
                 document += "\\newpage\n\n"
 
             document += r"%%%%%%%%%%% END DOCUMENT" + "\n\n" r"\label{LastPage}" + "\n\n" + r"\end{document}" + "\n"
 
             with open("traceflow-logo.png", "wb") as f:
-                f.write(get_data("traceflow.res", "traceflow-logo.png"))
+                f.write(load_resource("traceflow.res", "traceflow-logo.png"))
             with open("voxelflow-logo.png", "wb") as f:
-                f.write(get_data("traceflow.res", "voxelflow-logo.png"))
+                f.write(load_resource("traceflow.res", "voxelflow-logo.png"))
 
             # Recursively copy all files from the document.input_dir folder to the current folder
             print("Copying files from", self.document.input_dir, "to", os.getcwd())

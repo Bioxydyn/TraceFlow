@@ -1,5 +1,5 @@
 import os
-from typing import Union, List, Generic, TypeVar, Callable
+from typing import Union, List, Generic, TypeVar, Callable, Type
 from dataclasses import dataclass
 
 import mistune
@@ -27,16 +27,17 @@ class Design:
     content: list[dict]
     title: str
 
-    def get_referenced_requirement_ids() -> list[str]:
+    def get_referenced_requirement_ids(self) -> list[str]:
         """ A list of requirement IDs that are present in the description """
         ...
 
-    def get_referenced_test_ids() -> list[str]:
+    def get_referenced_test_ids(self) -> list[str]:
         """ A list of test IDs that are present in the description """
         ...
 
 
 T = TypeVar('T', bound=Union['Requirement', 'Test'])
+C = TypeVar('C', bound='SubDocument')
 
 
 @dataclass
@@ -46,12 +47,12 @@ class SubDocument(Generic[T]):
     items: List[T]
 
     @staticmethod
-    def from_file(file_path: str, item_generator: Callable[list[dict], list[T]]) -> 'SubDocument[T]':
+    def from_file_impl(cls: Type[C], file_path: str, item_generator: Callable[[list[dict]], list[T]]) -> C:
         content = read_file(file_path)
         parsed_content = parse_markdown(content)
         title = extract_title(parsed_content)
         items = item_generator(parsed_content)
-        return SubDocument(title=title, filename=file_path, items=items)
+        return cls(title=title, filename=file_path, items=items)
 
 
 class RequirementDocument(SubDocument[Requirement]):
@@ -77,7 +78,7 @@ class RequirementDocument(SubDocument[Requirement]):
 
     @staticmethod
     def from_file(file_path: str) -> 'RequirementDocument':
-        return SubDocument.from_file(file_path, RequirementDocument.item_generator)
+        return SubDocument.from_file_impl(RequirementDocument, file_path, RequirementDocument.item_generator)
 
 
 class TestDocument(SubDocument[Test]):
@@ -102,7 +103,7 @@ class TestDocument(SubDocument[Test]):
 
     @staticmethod
     def from_file(file_path: str) -> 'TestDocument':
-        return SubDocument.from_file(file_path, TestDocument.item_generator)
+        return SubDocument.from_file_impl(TestDocument, file_path, TestDocument.item_generator)
 
 
 @dataclass
