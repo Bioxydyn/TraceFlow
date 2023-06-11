@@ -54,7 +54,7 @@ setup(
     version=get_version("traceflow"),
     author="Bioxydyn Ltd",
     license="Commercial",
-    python_requires=">=3.7.0",
+    python_requires=">=3.9.0",
     package_dir={"traceflow": "traceflow"},
     include_package_data=True,
     zip_safe=False,
