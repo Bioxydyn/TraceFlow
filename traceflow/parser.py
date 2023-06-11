@@ -35,6 +35,7 @@ class Design:
         """ A list of test IDs that are present in the description """
         raise NotImplementedError
 
+
 T = TypeVar('T', bound=Union['Requirement', 'Test'])
 C = TypeVar('C', bound='SubDocument')
 
