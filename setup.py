@@ -42,6 +42,7 @@ def get_extras_require() -> dict[str, list[str]]:
             "setuptools",
             "pytest",
             "mypy",
+            "types-PyYAML",
             "coverage"
         ]
     }
