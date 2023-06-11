@@ -131,6 +131,16 @@ class Document:
     input_dir: str = ""
     version: str = ""
 
+    def verify_all_ids_unique(self) -> None:
+        """ Check if all IDs (both test and requirement) are unique """
+        all_ids: list[str] =  [req.req_id for r in self.requirements for req in r.items] + \
+            [test.test_id for t in self.tests for test in t.items]
+
+        if len(all_ids) != len(set(all_ids)):
+            # There are duplicates - what are they?
+            duplicates = [id for id in all_ids if all_ids.count(id) > 1]
+            raise ValueError(f"Duplicate IDs found: {duplicates}")
+
 
 def read_file(file_path: str) -> str:
     with open(file_path, "r") as file:

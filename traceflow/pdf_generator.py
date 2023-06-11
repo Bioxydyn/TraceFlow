@@ -207,7 +207,8 @@ class PdfReport():
                 document += "\\section{" + page.title + "}\n\n"
 
                 for requirement in page.items:
-                    document += "\\subsection{" + process_text(requirement.req_id + ": " + requirement.title) + "}\n\n"
+                    document += "\\subsection{" + process_text(requirement.req_id + ": " + requirement.title) + "}"
+                    document += "\\label{" + requirement.req_id + "}\n\n"
                     document += md_to_latex(requirement.content)
                     document += "\n\n"
 
@@ -218,14 +219,15 @@ class PdfReport():
                 document += "\\section{" + page.title + "}\n\n"
 
                 for test in page.items:
-                    document += "\\subsection{" + process_text(test.test_id + ": " + test.title) + "}\n\n"
+                    document += "\\subsection{" + process_text(test.test_id + ": " + test.title) + "}"
+                    document += "\\label{" + test.test_id + "}\n\n"
                     document += md_to_latex(test.content)
                     document += "\n\n"
 
                 # Add a page break
                 document += "\\newpage\n\n"
 
-            document += r"%%%%%%%%%%% END DOCUMENT" + "\n\n" r"\end{document}" + "\n"
+            document += r"%%%%%%%%%%% END DOCUMENT" + "\n\n" r"\label{LastPage}" + "\n\n" + r"\end{document}" + "\n"
 
             with open("traceflow-logo.png", "wb") as f:
                 f.write(get_data("traceflow.res", "traceflow-logo.png"))
@@ -244,6 +246,12 @@ class PdfReport():
                 output_file.write(document)
 
             try:
+                subprocess.check_output(
+                    f"pdflatex -halt-on-error {output_filename}",
+                    shell=True,  # noqa: S602
+                    stderr=subprocess.STDOUT,
+                    universal_newlines=True,
+                )  # nopep8
                 subprocess.check_output(
                     f"pdflatex -halt-on-error {output_filename}",
                     shell=True,  # noqa: S602
