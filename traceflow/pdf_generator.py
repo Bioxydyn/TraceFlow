@@ -54,8 +54,9 @@ class PdfReport():
 
         # 2. For each word, check if it is a unique ID. self.unique_ids is a set, so this is O(1)
         for index, word in enumerate(words):
-            if word in self.unique_ids:
-                words[index] = f"\\hyperref[{word}]{{{word}}}"
+            altered_word = word.replace(":", "")
+            if altered_word in self.unique_ids:
+                words[index] = f"\\hyperref[{altered_word}]{{{word}}}"
 
         # 3. Rebuild the text
         new_text = " ".join(words)
@@ -73,34 +74,54 @@ class PdfReport():
             if requirement.test_ids is not None:
                 columns += requirement.test_ids
         columns = list(set(columns))
-        # Build the table. There should be a tick in the cell if the test is linked to the requirement,
-        # otherwise it should be empty
-        table += "\\rowcolors{2}{gray!25}{white}\n"
-        table += "\\begin{table}[h]\n"
-        table += "\\centering\n"
-        table += "\\begin{tabular}{@{}c@{}" + "@{}>{\\centering\\arraybackslash}m{1cm}@{}" * len(columns) + "}\n"
-        table += "\\hline\n"
+        columns.sort()
+        large_matrix = len(columns) > 15
+        # Split columns into chunks so that we don't exceed the maximum number of columns
+        chunked_columns = []
+        while len(columns) > 0:
+            chunked_columns.append(columns[:18])
+            columns = columns[18:]
 
-        # Header row with test ids
-        header = "\\diagbox{\\textbf{\\textit{Req ID}}}{\\textbf{\\textit{Test ID}}}"
-        for test_id in columns:
-            header += " & \\rot{\\hyperref[" + test_id + "]{" + test_id + "}}"
-        header += " \\\\\n\\hline\n"
-        table += header
+        for chunk in chunked_columns:
+            if large_matrix:
+                # This is a large matrix. We put the table on its own page, and that page in landscape mode
+                table += "\\newpage\n"
+                table += "\\begin{landscape}\n"
 
-        # For each requirement, generate a row
-        for r in req_page.items:
-            row = "\\hyperref[" + r.req_id + "]{" + r.req_id + "}"
-            for test_id in columns:
-                if test_id in r.test_ids:
-                    row += " & \\hyperref[" + test_id + "]{" + "$\\checkmark$}"
-                else:
-                    row += " & "
-            row += " \\\\\n\\hline\n"
-            table += row
+            table += "\\setlength\\tabcolsep{0pt}\n"
+            # Build the table. There should be a tick in the cell if the test is linked to the requirement,
+            # otherwise it should be empty
+            table += "\\rowcolors{2}{gray!25}{white}\n"
+            table += "\\begin{table}[h]\n"
+            table += "\\centering\n"
+            table += "\\begin{tabular}{@{}c@{}" + "@{}>{\\centering\\arraybackslash}m{1cm}@{}" * len(chunk) + "}\n"
+            table += "\\hline\n"
 
-        table += "\\end{tabular}\n"
-        table += "\\end{table}\n\n"
+            # Header row with test ids
+            header = "\\diagbox{\\textbf{\\textit{Req ID}}}{\\textbf{\\textit{Test ID}}}"
+            for test_id in chunk:
+                header += " & \\rot{\\hyperref[" + test_id + "]{" + test_id + "}}"
+            header += " \\\\\n\\hline\n"
+            table += header
+
+            # For each requirement, generate a row
+            for r in req_page.items:
+                row = "\\hyperref[" + r.req_id + "]{" + r.req_id + "}"
+                for test_id in chunk:
+                    if test_id in r.test_ids:
+                        row += " & \\hyperref[" + test_id + "]{" + "$\\checkmark$}"
+                    else:
+                        row += " & "
+                row += " \\\\\n\\hline\n"
+                table += row
+
+            table += "\\end{tabular}\n"
+            table += "\\end{table}\n\n"
+
+            if large_matrix:
+                table += "\\end{landscape}\n"
+                table += "\\newpage\n"
+
         return table
 
     def md_to_latex(self, items: list[dict]) -> str:

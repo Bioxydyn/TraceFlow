@@ -1,5 +1,6 @@
 \documentclass[10pt,a4paper]{article}
 \usepackage[T1]{fontenc}
+\usepackage[paper=A4]{typearea}
 
 \usepackage{geometry}
 \geometry{verbose,tmargin=3.0cm,bmargin=2.0cm,lmargin=1.5cm,rmargin=1.5cm,headheight=38pt}
@@ -16,13 +17,14 @@
 \usepackage{wasysym}
 \usepackage{adjustbox}
 \usepackage{diagbox}
+\usepackage{pdflscape}
 
 \newcolumntype{R}[2]{%
     >{\adjustbox{angle=#1,lap=\width-(#2)}\bgroup}%
     l%
     <{\egroup}%
 }
-\newcommand*\rot{\multicolumn{1}{R{45}{1em}}}% no optional argument here, please!
+\newcommand*\rot{\multicolumn{1}{R{45}{-1em}}}
 
 \makeatletter
 \makeatother

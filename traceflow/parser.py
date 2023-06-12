@@ -104,7 +104,8 @@ class TestDocument(SubDocument[Test]):
             if child["type"] == "strong":
                 if child["children"][0]["text"] == "Requirement ID:":
                     # The text of the next element is the requirement ID
-                    requirements.append(children[index + 1]["text"].strip())
+                    full_req = children[index + 1]["text"].strip().split()[0].split(":")[0]
+                    requirements.append(full_req)
         return requirements
 
     @staticmethod
@@ -169,7 +170,7 @@ class Document:
             for t in test_doc.items:
                 for req_id in t.req_ids:
                     if req_id not in all_requirement_ids:
-                        raise ValueError(f"Test {t.test_id} references requirement {req_id} which does not exist")
+                        raise ValueError(f"Test `{t.test_id}` references requirement `{req_id}` which does not exist")
 
     def __post_init__(self) -> None:
         self.verify_all_ids_unique()
