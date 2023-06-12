@@ -76,11 +76,13 @@ class PdfReport():
         columns = list(set(columns))
         columns.sort()
         large_matrix = len(columns) > 15
+
         # Split columns into chunks so that we don't exceed the maximum number of columns
         chunked_columns = []
+        max_columns = 17
         while len(columns) > 0:
-            chunked_columns.append(columns[:18])
-            columns = columns[18:]
+            chunked_columns.append(columns[:max_columns])
+            columns = columns[max_columns:]
 
         for chunk in chunked_columns:
             if large_matrix:

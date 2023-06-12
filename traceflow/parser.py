@@ -104,8 +104,12 @@ class TestDocument(SubDocument[Test]):
             if child["type"] == "strong":
                 if child["children"][0]["text"] == "Requirement ID:":
                     # The text of the next element is the requirement ID
-                    full_req = children[index + 1]["text"].strip().split()[0].split(":")[0]
-                    requirements.append(full_req)
+                    # Check that we have index +1
+                    if index + 1 >= len(children):
+                        print("Warning, Requirement ID not found, expcted one after `Requirement ID:`")
+                    else:
+                        full_req = children[index + 1]["text"].strip().split()[0].split(":")[0]
+                        requirements.append(full_req)
         return requirements
 
     @staticmethod
