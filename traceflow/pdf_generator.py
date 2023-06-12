@@ -108,7 +108,7 @@ class PdfReport():
             for r in req_page.items:
                 row = ""
                 if not r.test_ids:
-                        row += "\\rowcolor{red}"
+                    row += "\\rowcolor{red}"
                 row += "\\hyperref[" + r.req_id + "]{" + r.req_id + "}"
                 for test_id in chunk:
                     if test_id in r.test_ids:
