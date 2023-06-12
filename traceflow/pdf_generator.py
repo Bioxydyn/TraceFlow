@@ -44,11 +44,23 @@ def isolated_filesystem(temp_path: Optional[str] = None) -> Generator:
             shutil.rmtree(temp_path)
 
 
-def process_text(text: str) -> str:
-    return text.replace(r"&", r"\&").replace(r"_", r"\_")
-
-
 class PdfReport():
+
+    def process_text(self, text: str) -> str:
+
+        # Replace any instances of a unique ID within the text to a link to the ID.
+        # 1. Explode text into words
+        words = text.split()
+
+        # 2. For each word, check if it is a unique ID. self.unique_ids is a set, so this is O(1)
+        for index, word in enumerate(words):
+            if word in self.unique_ids:
+                words[index] = f"\\hyperref[{word}]{{{word}}}"
+
+        # 3. Rebuild the text
+        new_text = " ".join(words)
+
+        return new_text.replace(r"&", r"\&").replace(r"_", r"\_")
 
     def build_traceability_matrix(self, req_page: RequirementDocument) -> str:
         # Display the traceability matrix
@@ -81,7 +93,7 @@ class PdfReport():
             row = "\\hyperref[" + r.req_id + "]{" + r.req_id + "}"
             for test_id in columns:
                 if test_id in r.test_ids:
-                    row += " & $\\checkmark$"
+                    row += " & \\hyperref[" + test_id + "]{" + "$\\checkmark$}"
                 else:
                     row += " & "
             row += " \\\\\n\\hline\n"
@@ -97,14 +109,14 @@ class PdfReport():
             latex = ["\n"]
             for child in item["children"]:
                 if child["type"] == "text":
-                    latex.append(process_text(child["text"]))
+                    latex.append(self.process_text(child["text"]))
                 else:
                     latex.append(handle_item(child))
             return "".join(latex)
 
         def handle_heading(item: dict) -> str:
             level = item["level"]
-            return "\\" + "sub" * (level - 1) + "section{" + process_text(item["children"][0]["text"]) + "}"
+            return "\\" + "sub" * (level - 1) + "section{" + self.process_text(item["children"][0]["text"]) + "}"
 
         def handle_list(item: dict) -> str:
             latex = ["\\begin{itemize}"]
@@ -112,10 +124,10 @@ class PdfReport():
                 latex.append("\n\\item ")
                 for child in list_item["children"]:
                     if child["type"] == "text":
-                        latex.append(process_text(child["text"]))
+                        latex.append(self.process_text(child["text"]))
                     if child["type"] == "block_text":
                         try:
-                            latex.append(process_text(child["children"][0]["text"]))
+                            latex.append(self.process_text(child["children"][0]["text"]))
                         except IndexError:
                             print("Warning, empty block text:", child)
 
@@ -128,7 +140,7 @@ class PdfReport():
                 '\n\\begin{figure}[h]',
                 '\n\\centering',
                 f'\n\\includegraphics[width=0.5\\textwidth]{{{url}}}',
-                f'\n\\caption{{{process_text(item["alt"])}}}',
+                f'\n\\caption{{{self.process_text(item["alt"])}}}',
                 '\n\\end{figure}',
             ]
             return ''.join(latex)
@@ -277,9 +289,9 @@ class PdfReport():
                 "image": handle_image,
                 "block_code": handle_block_code,
                 "blank_line": lambda _: "\n",
-                "strong": lambda item: f"\\textbf{{{process_text(item['children'][0]['text'])}}}",
+                "strong": lambda item: f"\\textbf{{{self.process_text(item['children'][0]['text'])}}}",
                 "softbreak": lambda _: "\n",
-                "codespan": lambda item: f"\\texttt{{{process_text(item['text'])}}}",
+                "codespan": lambda item: f"\\texttt{{{self.process_text(item['text'])}}}",
             }
             handler = handlers.get(item["type"])
             if handler:
@@ -307,6 +319,15 @@ class PdfReport():
         self.document = document
         self.original_working_directory = os.getcwd()
 
+        # Build a set containing all the test and requiremnt IDs
+        self.unique_ids = set()
+        for test_page in self.document.tests:
+            for test in test_page.items:
+                self.unique_ids.add(test.test_id)
+        for req_page in self.document.requirements:
+            for requirement in req_page.items:
+                self.unique_ids.add(requirement.req_id)
+
     def render(self) -> bytes:
 
         header = _latex_jinja2_env.from_string(
@@ -314,7 +335,7 @@ class PdfReport():
         )
 
         tex_vars = self.get_global_tex_vars()
-        tex_vars["report_title"] = process_text(self.document.name + " " + self.document.version + ": Validation Pack")
+        tex_vars["report_title"] = self.process_text(self.document.name + " " + self.document.version + ": Validation Pack")
         document = header.render(**tex_vars)
 
         # Create the "report" directory if it doesn't exist
@@ -330,7 +351,7 @@ class PdfReport():
                 document += self.build_traceability_matrix(req_page)
 
                 for requirement in req_page.items:
-                    document += "\\subsection{" + process_text(requirement.req_id + ": " + requirement.title) + "}"
+                    document += "\\subsection{" + self.process_text(requirement.req_id + ": " + requirement.title) + "}"
                     document += "\\label{" + requirement.req_id + "}\n\n"
                     document += self.md_to_latex(requirement.content)
                     document += "\n\n"
@@ -342,7 +363,7 @@ class PdfReport():
                 document += self.md_to_latex(test_page.generic_content)
 
                 for test in test_page.items:
-                    document += "\\subsection{" + process_text(test.test_id + ": " + test.title) + "}"
+                    document += "\\subsection{" + self.process_text(test.test_id + ": " + test.title) + "}"
                     document += "\\label{" + test.test_id + "}\n\n"
                     document += self.md_to_latex(test.content)
                     document += "\n\n"
