@@ -106,7 +106,10 @@ class PdfReport():
 
             # For each requirement, generate a row
             for r in req_page.items:
-                row = "\\hyperref[" + r.req_id + "]{" + r.req_id + "}"
+                row = ""
+                if not r.test_ids:
+                        row += "\\rowcolor{red}"
+                row += "\\hyperref[" + r.req_id + "]{" + r.req_id + "}"
                 for test_id in chunk:
                     if test_id in r.test_ids:
                         row += " & \\hyperref[" + test_id + "]{" + "$\\checkmark$}"
