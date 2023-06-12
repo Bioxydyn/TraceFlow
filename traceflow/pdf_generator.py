@@ -49,7 +49,7 @@ class PdfReport():
     def process_text(self, text: str) -> str:
 
         # Replace any instances of a unique ID within the text to a link to the ID.
-        # 1. Explode text into words
+        # 1. Explode text into words
         words = text.split()
 
         # 2. For each word, check if it is a unique ID. self.unique_ids is a set, so this is O(1)
@@ -78,7 +78,7 @@ class PdfReport():
         table += "\\rowcolors{2}{gray!25}{white}\n"
         table += "\\begin{table}[h]\n"
         table += "\\centering\n"
-        table += "\\begin{tabular}{@{}c@{}" + "@{}>{\\centering\\arraybackslash}m{1cm}@{}"*len(columns) + "}\n"
+        table += "\\begin{tabular}{@{}c@{}" + "@{}>{\\centering\\arraybackslash}m{1cm}@{}" * len(columns) + "}\n"
         table += "\\hline\n"
 
         # Header row with test ids
@@ -335,7 +335,9 @@ class PdfReport():
         )
 
         tex_vars = self.get_global_tex_vars()
-        tex_vars["report_title"] = self.process_text(self.document.name + " " + self.document.version + ": Validation Pack")
+        tex_vars["report_title"] = self.process_text(
+            self.document.name + " " + self.document.version + ": Validation Pack"
+        )
         document = header.render(**tex_vars)
 
         # Create the "report" directory if it doesn't exist

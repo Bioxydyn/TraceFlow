@@ -1,5 +1,5 @@
 import os
-from typing import Union, List, Generic, TypeVar, Callable, Type, Optional
+from typing import Union, List, Generic, TypeVar, Callable, Type
 from dataclasses import dataclass
 
 import mistune
@@ -11,7 +11,7 @@ class Requirement:
     req_id: str
     content: list[dict]
     title: str
-    test_ids: Optional[list[str]] = None
+    test_ids: list[str]
 
 
 @dataclass
@@ -69,12 +69,12 @@ class RequirementDocument(SubDocument[Requirement]):
     def item_generator(parsed_content: list[dict]) -> list[Requirement]:
         requirements: list[Requirement] = []
         # Every L2 heading in the page must be a requirement
-        current_req = Requirement(req_id="", content=[], title="")
+        current_req = Requirement(req_id="", content=[], title="", test_ids=[])
         for elem in parsed_content:
             if is_ast_element_heading(elem) == 2:
                 if len(current_req.content) > 0:
                     requirements.append(current_req)
-                    current_req = Requirement(req_id="", content=[], title="")
+                    current_req = Requirement(req_id="", content=[], title="", test_ids=[])
                 heading_text = get_heading_text(elem)
                 current_req.req_id = heading_text.split(" ")[0].replace(":", "")
                 current_req.title = heading_text.replace(current_req.req_id + ":", "").strip()
@@ -103,7 +103,7 @@ class TestDocument(SubDocument[Test]):
 
             if child["type"] == "strong":
                 if child["children"][0]["text"] == "Requirement ID:":
-                    # The text of the next element is the requirement ID
+                    # The text of the next element is the requirement ID
                     requirements.append(children[index + 1]["text"].strip())
         return requirements
 
@@ -162,7 +162,7 @@ class Document:
                         if r_id in t.req_ids:
                             r.test_ids.append(t.test_id)
 
-        all_requirement_ids: set[str] = {r.req_id for r in self.requirements for r in r.items}
+        all_requirement_ids: set[str] = {item.req_id for r in self.requirements for item in r.items}
 
         # Iterate over the test documents and verify that any referenced requirements exist
         for test_doc in self.tests:
