@@ -123,7 +123,6 @@ class TestDocument(SubDocument[Test]):
                 if current_test.test_id != "":
                     current_test.content.append(elem)
                     current_test.req_ids += TestDocument.extract_requirement_ids(elem)
-                    print(current_test.req_ids)
         if len(current_test.content) > 0:
             tests.append(current_test)
         return tests
@@ -162,6 +161,15 @@ class Document:
                     for t in test_doc.items:
                         if r_id in t.req_ids:
                             r.test_ids.append(t.test_id)
+
+        all_requirement_ids: set[str] = {r.req_id for r in self.requirements for r in r.items}
+
+        # Iterate over the test documents and verify that any referenced requirements exist
+        for test_doc in self.tests:
+            for t in test_doc.items:
+                for req_id in t.req_ids:
+                    if req_id not in all_requirement_ids:
+                        raise ValueError(f"Test {t.test_id} references requirement {req_id} which does not exist")
 
     def __post_init__(self) -> None:
         self.verify_all_ids_unique()
@@ -207,7 +215,6 @@ def process_directory(directory: str, version: str) -> Document:
             config = yaml.safe_load(config_file)
             if "name" in config:
                 name = config["name"]
-                print(f"Found name in config.yml: {name}")
     return Document(requirements=requirements, tests=tests, name=name, input_dir=absolute_dir_path, version=version)
 
 

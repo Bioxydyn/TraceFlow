@@ -27,7 +27,7 @@ The user is logged in and redirected to the main dashboard.
 
 ## TEST-002: Automatic test
 
-**Requirement ID:** REQ-001
+**Requirement ID:** REQ-003
 
 ### Test Steps:
 

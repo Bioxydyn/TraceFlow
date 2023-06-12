@@ -14,12 +14,21 @@
 \usepackage{multirow}
 \usepackage{fancyhdr}
 \usepackage{wasysym}
+\usepackage{adjustbox}
+\usepackage{diagbox}
+
+\newcolumntype{R}[2]{%
+    >{\adjustbox{angle=#1,lap=\width-(#2)}\bgroup}%
+    l%
+    <{\egroup}%
+}
+\newcommand*\rot{\multicolumn{1}{R{45}{1em}}}% no optional argument here, please!
 
 \makeatletter
 \makeatother
 \providecommand{\tabularnewline}{\\}
 
-\usepackage[usenames,dvipsnames,svgnames,table, xcdraw]{xcolor} % use color
+\usepackage[usenames,dvipsnames,svgnames,table,xcdraw]{xcolor} % use color
 \usepackage{booktabs} % commands for table rules
 \usepackage{tikz}
 \usepackage{lastpage}

@@ -11,7 +11,7 @@ from typing import Generator, Optional
 import latex.jinja2
 import cairosvg
 
-from traceflow.parser import Document
+from traceflow.parser import Document, RequirementDocument
 from traceflow.version import __version__
 
 _latex_jinja2_env = latex.jinja2.make_env()
@@ -49,6 +49,47 @@ def process_text(text: str) -> str:
 
 
 class PdfReport():
+
+    def build_traceability_matrix(self, req_page: RequirementDocument) -> str:
+        # Display the traceability matrix
+        table = "\\subsection{Traceability Matrix}\n\n"
+
+        # Create the table data
+        columns: list[str] = []
+
+        for requirement in req_page.items:
+            if requirement.test_ids is not None:
+                columns += requirement.test_ids
+        columns = list(set(columns))
+        # Build the table. There should be a tick in the cell if the test is linked to the requirement,
+        # otherwise it should be empty
+        table += "\\rowcolors{2}{gray!25}{white}\n"
+        table += "\\begin{table}[h]\n"
+        table += "\\centering\n"
+        table += "\\begin{tabular}{@{}c@{}" + "@{}>{\\centering\\arraybackslash}m{1cm}@{}"*len(columns) + "}\n"
+        table += "\\hline\n"
+
+        # Header row with test ids
+        header = "\\diagbox{\\textbf{\\textit{Req ID}}}{\\textbf{\\textit{Test ID}}}"
+        for test_id in columns:
+            header += " & \\rot{\\hyperref[" + test_id + "]{" + test_id + "}}"
+        header += " \\\\\n\\hline\n"
+        table += header
+
+        # For each requirement, generate a row
+        for r in req_page.items:
+            row = "\\hyperref[" + r.req_id + "]{" + r.req_id + "}"
+            for test_id in columns:
+                if test_id in r.test_ids:
+                    row += " & $\\checkmark$"
+                else:
+                    row += " & "
+            row += " \\\\\n\\hline\n"
+            table += row
+
+        table += "\\end{tabular}\n"
+        table += "\\end{table}\n\n"
+        return table
 
     def md_to_latex(self, items: list[dict]) -> str:
 
@@ -286,42 +327,7 @@ class PdfReport():
                 document += "\\section{" + req_page.title + "}\\label{" + req_page.title + "}\n\n"
                 document += self.md_to_latex(req_page.generic_content)
 
-                # Display the traceability matrix
-                document += "\\subsection{Traceability Matrix}\n\n"
-
-                # Create the table data
-                columns: list[str] = []
-
-                for requirement in req_page.items:
-                    if requirement.test_ids is not None:
-                        columns += requirement.test_ids
-                columns = list(set(columns))
-                print(f"Building traceability matrix for: {columns}")
-                # Build the table. There should be a tick in the cell if the test is linked to the requirement,
-                # otherwise it should be empty
-                document += "\\begin{table}[h]\n"
-                document += "\\centering\n"
-                document += "\\caption{Traceability Matrix}\n"
-                document += "\\begin{tabular}{|c|" + "c"*len(columns) + "|}\n"
-                document += "\\hline\n"
-
-                # Header row with test ids
-                header = "Req \\ Test ID & " + " & ".join(columns) + " \\\\\n\\hline\n"
-                document += header
-
-                # For each requirement, generate a row
-                for r in req_page.items:
-                    row = r.req_id
-                    for test_id in columns:
-                        if test_id in r.test_ids:
-                            row += " & $\\checkmark$"
-                        else:
-                            row += " & "
-                    row += " \\\\\n\\hline\n"
-                    document += row
-
-                document += "\\end{tabular}\n"
-                document += "\\end{table}\n\n"
+                document += self.build_traceability_matrix(req_page)
 
                 for requirement in req_page.items:
                     document += "\\subsection{" + process_text(requirement.req_id + ": " + requirement.title) + "}"
@@ -351,7 +357,6 @@ class PdfReport():
                 f.write(load_resource("traceflow.res", "voxelflow-logo.png"))
 
             # Recursively copy all files from the document.input_dir folder to the current folder
-            print("Copying files from", self.document.input_dir, "to", os.getcwd())
             for root, _, files in os.walk(self.document.input_dir):
                 for filename in files:
                     shutil.copy(os.path.join(root, filename), filename)
