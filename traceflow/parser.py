@@ -104,7 +104,7 @@ class TestDocument(SubDocument[Test]):
             if child["type"] == "strong":
                 if child["children"][0]["text"] == "Requirement ID:":
                     # The text of the next element is the requirement ID
-                    # Check that we have index +1
+                    # Check that we have index +1
                     if index + 1 >= len(children):
                         print("Warning, Requirement ID not found, expcted one after `Requirement ID:`")
                     else:

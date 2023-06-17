@@ -11,7 +11,7 @@ from typing import Generator, Optional
 import latex.jinja2
 import cairosvg
 
-from traceflow.parser import Document, RequirementDocument
+from traceflow.parser import Document, RequirementDocument, parse_markdown
 from traceflow.version import __version__
 
 _latex_jinja2_env = latex.jinja2.make_env()
@@ -60,6 +60,16 @@ class PdfReport():
 
         # 3. Rebuild the text
         new_text = " ".join(words)
+
+        # 4. Did we originally have whitespace at the start or end - if so, add it back
+        if text.startswith(" "):
+            new_text = " " + new_text
+        if text.endswith(" "):
+            new_text += " "
+        if text.startswith("\n"):
+            new_text = "\n" + new_text
+        if text.endswith("\n"):
+            new_text += "\n"
 
         return new_text.replace(r"&", r"\&").replace(r"_", r"\_")
 
@@ -315,7 +325,9 @@ class PdfReport():
                 "image": handle_image,
                 "block_code": handle_block_code,
                 "blank_line": lambda _: "\n",
+                "newline": lambda _: "\n",
                 "strong": lambda item: f"\\textbf{{{self.process_text(item['children'][0]['text'])}}}",
+                "emphasis": lambda item: f"\\emph{{{self.process_text(item['children'][0]['text'])}}}",
                 "softbreak": lambda _: "\n",
                 "codespan": lambda item: f"\\texttt{{{self.process_text(item['text'])}}}",
             }
@@ -381,6 +393,14 @@ class PdfReport():
                 for requirement in req_page.items:
                     document += "\\subsection{" + self.process_text(requirement.req_id + ": " + requirement.title) + "}"
                     document += "\\label{" + requirement.req_id + "}\n\n"
+
+                    linked_test_content: str = ""
+                    for test_id_linked in requirement.test_ids:
+                        linked_test_content += "**Test ID:** " + test_id_linked + "\n"
+                    if linked_test_content != "":
+                        document += self.md_to_latex(parse_markdown(linked_test_content))
+                        document += "\n\n"
+
                     document += self.md_to_latex(requirement.content)
                     document += "\n\n"
 
