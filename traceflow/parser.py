@@ -52,6 +52,7 @@ class SubDocument(Generic[T]):
     def from_file_impl(cls: Type[C], file_path: str, item_generator: Callable[[list[dict]], list[T]]) -> C:
         content = read_file(file_path)
         parsed_content = parse_markdown(content)
+        print(parsed_content)
         generic_content = []
         for elem in parsed_content:
             if is_ast_element_heading(elem) == 2:
@@ -187,8 +188,8 @@ def read_file(file_path: str) -> str:
 
 
 def parse_markdown(content: str) -> list[dict]:
-    markdown_parser = mistune.create_markdown(renderer=mistune.AstRenderer())
-    return markdown_parser(content)
+    parser = mistune.create_markdown(renderer=mistune.AstRenderer(), plugins=['table', 'strikethrough'])
+    return parser(content)
 
 
 def process_directory(directory: str, version: str) -> Document:

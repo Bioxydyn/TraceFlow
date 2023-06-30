@@ -1,0 +1,165 @@
+{'type': 'table', 'children': [
+        {'type': 'table_head', 'children': [
+                {'type': 'table_cell', 'children': [
+                        {'type': 'strong', 'children': [
+                                {'type': 'text', 'text': 'DICOM Series'
+                                }
+                            ]
+                        }
+                    ], 'align': None, 'is_head': True
+                },
+                {'type': 'table_cell', 'children': [
+                        {'type': 'strong', 'children': [
+                                {'type': 'text', 'text': 'Key Parameters'
+                                }
+                            ]
+                        }
+                    ], 'align': None, 'is_head': True
+                },
+                {'type': 'table_cell', 'children': [
+                        {'type': 'strong', 'children': [
+                                {'type': 'text', 'text': 'Typical Parameters'
+                                }
+                            ]
+                        }
+                    ], 'align': None, 'is_head': True
+                },
+                {'type': 'table_cell', 'children': [
+                        {'type': 'strong', 'children': [
+                                {'type': 'text', 'text': 'Map to Image Type'
+                                }
+                            ]
+                        }
+                    ], 'align': None, 'is_head': True
+                }
+            ]
+        },
+        {'type': 'table_body', 'children': [
+                {'type': 'table_row', 'children': [
+                        {'type': 'table_cell', 'children': [
+                                {'type': 'text', 'text': 'T1 VFA'
+                                }
+                            ], 'align': None, 'is_head': False
+                        },
+                        {'type': 'table_cell', 'children': [
+                                {'type': 'text', 'text': 'TR, TE, FA'
+                                }
+                            ], 'align': None, 'is_head': False
+                        },
+                        {'type': 'table_cell', 'children': [
+                                {'type': 'text', 'text': '96x96x24'
+                                },
+                                {'type': 'inline_html', 'text': '<br>'
+                                },
+                                {'type': 'inline_html', 'text': '<br>'
+                                },
+                                {'type': 'text', 'text': 'FA=2°,
+                                    17°,
+                                    32°'
+                                }
+                            ], 'align': None, 'is_head': False
+                        },
+                        {'type': 'table_cell', 'children': [
+                                {'type': 'codespan', 'text': 'vfa'
+                                }
+                            ], 'align': None, 'is_head': False
+                        }
+                    ]
+                },
+                {'type': 'table_row', 'children': [
+                        {'type': 'table_cell', 'children': [
+                                {'type': 'text', 'text': 'High-res pre-contrast'
+                                }
+                            ], 'align': None, 'is_head': False
+                        },
+                        {'type': 'table_cell', 'children': [
+                                {'type': 'text', 'text': 'TR, TE, FA'
+                                }
+                            ], 'align': None, 'is_head': False
+                        },
+                        {'type': 'table_cell', 'children': [
+                                {'type': 'text', 'text': '512x512x92'
+                                },
+                                {'type': 'inline_html', 'text': '<br>'
+                                },
+                                {'type': 'inline_html', 'text': '<br>'
+                                },
+                                {'type': 'text', 'text': 'FA=32°'
+                                }
+                            ], 'align': None, 'is_head': False
+                        },
+                        {'type': 'table_cell', 'children': [
+                                {'type': 'codespan', 'text': 'high-res-pre'
+                                }
+                            ], 'align': None, 'is_head': False
+                        }
+                    ]
+                },
+                {'type': 'table_row', 'children': [
+                        {'type': 'table_cell', 'children': [
+                                {'type': 'text', 'text': 'T1-weighted dynamic'
+                                }
+                            ], 'align': None, 'is_head': False
+                        },
+                        {'type': 'table_cell', 'children': [
+                                {'type': 'text', 'text': 'TR, TE, FA, Temporal resolution'
+                                }
+                            ], 'align': None, 'is_head': False
+                        },
+                        {'type': 'table_cell', 'children': [
+                                {'type': 'text', 'text': '96x96x24 '
+                                },
+                                {'type': 'inline_html', 'text': '<br>'
+                                },
+                                {'type': 'inline_html', 'text': '<br>'
+                                },
+                                {'type': 'text', 'text': 'FA=17°'
+                                },
+                                {'type': 'inline_html', 'text': '<br>'
+                                },
+                                {'type': 'inline_html', 'text': '<br>'
+                                },
+                                {'type': 'text', 'text': 'Temporal resolution: 2s to 10s'
+                                }
+                            ], 'align': None, 'is_head': False
+                        },
+                        {'type': 'table_cell', 'children': [
+                                {'type': 'codespan', 'text': 'dynamic-uncorrected'
+                                }
+                            ], 'align': None, 'is_head': False
+                        }
+                    ]
+                },
+                {'type': 'table_row', 'children': [
+                        {'type': 'table_cell', 'children': [
+                                {'type': 'text', 'text': 'High-res post-contrast'
+                                }
+                            ], 'align': None, 'is_head': False
+                        },
+                        {'type': 'table_cell', 'children': [
+                                {'type': 'text', 'text': 'TR, TE, FA'
+                                }
+                            ], 'align': None, 'is_head': False
+                        },
+                        {'type': 'table_cell', 'children': [
+                                {'type': 'text', 'text': '512x512x92'
+                                },
+                                {'type': 'inline_html', 'text': '<br>'
+                                },
+                                {'type': 'inline_html', 'text': '<br>'
+                                },
+                                {'type': 'text', 'text': 'FA=32°'
+                                }
+                            ], 'align': None, 'is_head': False
+                        },
+                        {'type': 'table_cell', 'children': [
+                                {'type': 'codespan', 'text': 'high-res-post'
+                                }
+                            ], 'align': None, 'is_head': False
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}
