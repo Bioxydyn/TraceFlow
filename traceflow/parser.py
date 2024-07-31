@@ -231,7 +231,13 @@ def is_ast_element_heading(elem: dict) -> int:
 
 
 def get_heading_text(elem: dict) -> str:
-    return elem["children"][0]["text"].strip()
+    text: str = ""
+    for elem in elem["children"]:
+        if elem["type"] == "text":
+            text += elem["text"]
+        if elem["type"] == "codespan":
+            text += f" `{elem['text']}` "
+    return text.strip()
 
 
 def extract_title(parsed_content: list[dict]) -> str:

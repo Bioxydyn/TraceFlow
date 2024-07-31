@@ -160,6 +160,11 @@ class PdfReport():
                     latex.append(handle_item(child))
             return "".join(latex)
 
+        def handle_link(item: dict) -> str:
+            link_url = item["link"]
+            link_text = self.md_to_latex(item["children"])
+            return f"\\href{{{link_url}}}{{{link_text}}}"
+
         def handle_heading(item: dict) -> str:
             level = item["level"]
             return "\\" + "sub" * (level - 1) + "section{" + self.process_text(item["children"][0]["text"]) + "}"
@@ -173,7 +178,7 @@ class PdfReport():
                         latex.append(self.process_text(child["text"]))
                     if child["type"] == "block_text":
                         try:
-                            latex.append(self.process_text(child["children"][0]["text"]))
+                            latex.append(self.md_to_latex(child["children"]))
                         except IndexError:
                             print("Warning, empty block text:", child)
 
@@ -329,7 +334,9 @@ class PdfReport():
 
         def handle_item(item: dict) -> str:
             handlers = {
+                "text": lambda item: self.process_text(item["text"]),
                 "paragraph": handle_paragraph,
+                "link": handle_link,
                 "heading": handle_heading,
                 "list": handle_list,
                 "image": handle_image,
