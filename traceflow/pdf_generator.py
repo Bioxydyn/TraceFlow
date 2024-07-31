@@ -340,6 +340,7 @@ class PdfReport():
                 "emphasis": lambda item: f"\\emph{{{self.process_text(item['children'][0]['text'])}}}",
                 "softbreak": lambda _: "\n",
                 "codespan": lambda item: f"\\texttt{{{self.process_text(item['text'])}}}",
+                "linebreak": lambda _: "\n",
             }
             handler = handlers.get(item["type"])
             if handler:

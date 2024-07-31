@@ -52,7 +52,6 @@ class SubDocument(Generic[T]):
     def from_file_impl(cls: Type[C], file_path: str, item_generator: Callable[[list[dict]], list[T]]) -> C:
         content = read_file(file_path)
         parsed_content = parse_markdown(content)
-        print(parsed_content)
         generic_content = []
         for elem in parsed_content:
             if is_ast_element_heading(elem) == 2:
