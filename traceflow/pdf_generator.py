@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import shutil
 from pkgutil import get_data
 import random
+import re
 import string
 from typing import Generator, Optional
 
@@ -45,17 +46,17 @@ def isolated_filesystem(temp_path: Optional[str] = None) -> Generator:
 
 
 class PdfReport():
-
-    def process_text(self, text: str) -> str:
+    @staticmethod
+    def process_text_impl(text: str, unique_ids: set[str]) -> str:
 
         # Replace any instances of a unique ID within the text to a link to the ID.
         # 1. Explode text into words
         words = text.split()
 
-        # 2. For each word, check if it is a unique ID. self.unique_ids is a set, so this is O(1)
+        # 2. For each word, check if it is a unique ID. unique_ids is a set, so this is O(1)
         for index, word in enumerate(words):
             altered_word = word.replace(":", "")
-            if altered_word in self.unique_ids:
+            if altered_word in unique_ids:
                 words[index] = f"\\hyperref[{altered_word}]{{{word}}}"
 
         # 3. Rebuild the text
@@ -71,7 +72,16 @@ class PdfReport():
         if text.endswith("\n"):
             new_text += "\n"
 
+        # Regular expression to find text wrapped in backticks
+        inline_code_pattern = r'`([^`]*)`'
+
+        # Replace the text wrapped in backticks with LaTeX inline code
+        new_text = re.sub(inline_code_pattern, r'\\texttt{\1}', new_text)
+
         return new_text.replace(r"&", r"\&").replace(r"_", r"\_")
+
+    def process_text(self, text: str) -> str:
+        return self.process_text_impl(text, self.unique_ids)
 
     def build_traceability_matrix(self, req_page: RequirementDocument) -> str:
         # Display the traceability matrix

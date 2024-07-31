@@ -17,9 +17,9 @@ def get_install_requires() -> list[str]:
         "wheel",
         "mistune==2.0.5",
         "latex==0.7.0",
-        "cairosvg==2.7.0",
-        "Jinja2==3.1.2",
-        "pyyaml==6.0",
+        "cairosvg==2.7.1",
+        "Jinja2==3.1.4",
+        "pyyaml==6.0.1",
     ]
 
 
