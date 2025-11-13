@@ -13,32 +13,33 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        python-version: ["3.9", "3.10"]
+        python-version: ["3.12"]
     steps:
-    - uses: actions/checkout@v2
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v1
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v4
       with:
         python-version: ${{ matrix.python-version }}
-    - name: Install python dependencies
+        check-latest: true
+    - name: Install uv and sync dependencies
       run: |
-        pip3 install -e .[dev]
+        python -m pip install --upgrade pip
+        python -m pip install uv
+        uv sync --all-groups
     - name: Lint with flake8
       run: |
-        bash py-lint.sh
-    - name: Check static types with mypy
+        uv run bash py-lint.sh
+    - name: Check static types with ty
       run: |
-        mypy traceflow --ignore-missing-imports
-        mypy tests --ignore-missing-imports
+        uv run ty check traceflow tests
     - name: Test with pytest
       run: |
-        pytest -sv tests
+        uv run pytest -sv tests
     - name: Generate coverage report
       run: |
         sudo apt-get install -y lcov
-        coverage run -m pytest -sv tests
-        coverage html --omit tests/*.py
-        coverage lcov
+        uv run coverage run -m pytest -sv tests
+        uv run coverage html --omit tests/*.py
+        uv run coverage lcov
         ls
         # Coverage is now in htmlcov/
-

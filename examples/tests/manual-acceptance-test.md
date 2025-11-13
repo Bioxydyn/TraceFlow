@@ -25,13 +25,13 @@ The user is logged in and redirected to the main dashboard.
 ```manualtest
 ```
 
-## TEST-002: Automatic test
+## TEST-002: Automatic Playwright test
 
 **Requirement ID:** REQ-003
 
 ### Test Steps:
 
-1. This automated test creates a user, logs in, and then logs out.
+1. The `autoplaywright` block runs the Playwright sample located in the `playwright/` directory and captures the video, stdout/stderr, and a 3×3 key frame grid from the test execution.
 
 ### Expected Result:
 
@@ -39,6 +39,27 @@ The test should pass successfully.
 
 ### Test Outcome:
 
+```autoplaywright
+0001-test-counter
+```
+
+## TEST-003: Automatic test
+
+**Requirement ID:** REQ-003
+
+### Test Steps:
+
+1. This `autotest` block demonstrates running a simple pytest command as part of the report.
+
+### Expected Result:
+
+The test should pass successfully.
+
+### Test Outcome:
+
+```autoplaywright
+0001-test-counter
+```
 ```autotest
 pytest --disable-warnings -sv tests/test_hello_world.py
 ```

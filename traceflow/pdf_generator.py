@@ -10,12 +10,37 @@ import string
 from typing import Generator, Optional
 
 import latex.jinja2
-import cairosvg
+from PIL import Image, ImageDraw, ImageFont
+
+try:
+    import cairosvg
+except OSError as exc:
+    cairosvg = None  # type: ignore[assignment]
+    _CAIROSVG_IMPORT_ERROR = exc
+else:
+    _CAIROSVG_IMPORT_ERROR = None
 
 from traceflow.parser import Document, RequirementDocument, parse_markdown
 from traceflow.version import __version__
 
 _latex_jinja2_env = latex.jinja2.make_env()
+
+PLAYWRIGHT_MAX_FRAMES = 9
+_PLAYWRIGHT_LOG_CHAR_MAP: dict[str, str] = {
+    "✓": "[PASS]",
+    "✔": "[PASS]",
+    "›": ">",
+    "➜": "->",
+    "…": "...",
+    "–": "-",
+    "—": "--",
+    "‘": "'",
+    "’": "'",
+    "“": '"',
+    "”": '"',
+}
+
+PLAYWRIGHT_MAX_FRAMES = 9
 
 
 def load_resource(package: str, filename: str) -> bytes:
@@ -211,6 +236,8 @@ class PdfReport():
                 return handle_test_cover_page(item)
             if code_type == "autotest":
                 return handle_auto_test(item)
+            if code_type == "autoplaywright":
+                return handle_playwright_test(item)
             return handle_code(item)
 
         def handle_test_cover_page(_: dict) -> str:
@@ -291,6 +318,15 @@ class PdfReport():
 """ + output_str + "\n" + r"""
 \end{lstlisting}"""  # noqa E501
 
+        def handle_playwright_test(item: dict) -> str:
+            content: str = item.get("text", "")
+            lines = [line.strip() for line in content.splitlines() if line.strip()]
+            if not lines:
+                raise ValueError("autoplaywright blocks must include the Playwright test ID")
+            test_name = lines[0]
+            notes_text = " ".join(lines[1:])
+            return self._render_playwright_test_section(test_name, notes_text)
+
         def handle_manual_test(_: dict) -> str:
             pass_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))  # noqa S311
             fail_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))  # noqa S311
@@ -327,6 +363,11 @@ class PdfReport():
 
             subprocess.run(["mmdc", "-i", mmd_path, "-o", svg_path], check=True)  # noqa S607, S603
 
+            if cairosvg is None:
+                raise RuntimeError(
+                    "Rendering mermaid diagrams requires cairosvg, but importing it failed"
+                    f" with: {_CAIROSVG_IMPORT_ERROR}"
+                )
             # Convert the SVG to PDF
             pdf_path = svg_path.replace(".svg", ".pdf")
             cairosvg.svg2pdf(url=svg_path, write_to=pdf_path)
@@ -361,6 +402,243 @@ class PdfReport():
             latex.append(handle_item(item))
         return "\n".join(latex)
 
+    def _render_playwright_test_section(self, test_name: str, notes_text: str) -> str:
+        video_path, log_path, exit_code = self._execute_playwright_test(test_name)
+        log_output = self._read_playwright_log(log_path)
+        grid_basename = self._build_playwright_grid(video_path)
+
+        def create_latex_markup(is_pass: bool) -> str:
+            if is_pass:
+                return (
+                    r"\textbf{Pass} \CheckedBox \hspace{2cm} \textbf{Fail} \Square "
+                    r"\hspace{2cm} \textbf{Skip} \Square \\"
+                )
+            return (
+                r"\textbf{Pass} \Square \hspace{2cm} \textbf{Fail} \CheckedBox "
+                r"\hspace{2cm} \textbf{Skip} \Square \\"
+            )
+
+        status_block = create_latex_markup(is_pass=exit_code == 0)
+        body: list[str] = [r"\noindent", status_block, r"\vspace{0.2cm}"]
+        body.append(f"\\textbf{{Playwright Test:}} {self.process_text(test_name)} \\\\")
+        if notes_text:
+            body.append(f"\\textbf{{Test Notes:}} {self.process_text(notes_text)} \\\\")
+
+        if grid_basename:
+            body.append(
+                "\\begin{figure}[H]\n"
+                "\\centering\n"
+                f"\\includegraphics[width=\\linewidth]{{{grid_basename}}}\n"
+                f"\\caption{{Key frames captured from {self.process_text(test_name)}}}\n"
+                "\\end{figure}"
+            )
+        else:
+            body.append("\\textit{Key frames not available for this run.}")
+
+        body.append(
+            "\\vspace{0.2cm}\n"
+            "\\begin{lstlisting}[language=bash, basicstyle=\\ttfamily\\small, "
+            "breaklines=true, breakatwhitespace=true, "
+            "showstringspaces=false, escapeinside={(*}{*)}]\n"
+            + log_output
+            + "\n"
+            + "\\end{lstlisting}"
+        )
+
+        return "\n".join(body)
+
+    def _execute_playwright_test(self, test_name: str) -> tuple[str, str, int]:
+        if not self.playwright_dir:
+            raise RuntimeError(
+                "autoplaywright tests require --playwright-dir to be set so Playwright artifacts can be produced."
+            )
+        script_path = os.path.join(self.playwright_dir, "run-test-video.sh")
+        if not os.path.isfile(script_path):
+            raise FileNotFoundError(f"Playwright runner script not found: {script_path}")
+
+        video_output = os.path.join(os.getcwd(), self.get_temporary_filename(suffix=".webm"))
+        log_output = os.path.join(os.getcwd(), self.get_temporary_filename(suffix=".txt"))
+
+        command = ["bash", script_path, test_name, video_output, log_output]
+        try:
+            subprocess.run(command, cwd=self.playwright_dir, check=True)  # noqa S603
+            exit_code = 0
+        except subprocess.CalledProcessError as exc:
+            exit_code = exc.returncode
+
+        return video_output, log_output, exit_code
+
+    def _read_playwright_log(self, log_path: str) -> str:
+        if not os.path.exists(log_path):
+            return "No Playwright output captured."
+        with open(log_path, "r", encoding="utf-8", errors="replace") as log_file:
+            log_content = log_file.read()
+        sanitized = log_content
+        for original, replacement in _PLAYWRIGHT_LOG_CHAR_MAP.items():
+            sanitized = sanitized.replace(original, replacement)
+        sanitized = sanitized.replace("\r\n", "\n")
+        sanitized = ''.join(ch if ord(ch) < 128 else "?" for ch in sanitized)
+        if len(sanitized) > 40000:
+            return sanitized[:40000] + " ... [truncated]"
+        return sanitized
+
+    def _build_playwright_grid(self, video_path: str) -> Optional[str]:
+        if not os.path.exists(video_path):
+            return None
+
+        ffmpeg_path, ffprobe_path = self._ensure_ffmpeg_available()
+        timestamps = self._select_keyframe_timestamps(video_path, ffprobe_path)
+        if not timestamps:
+            return None
+
+        frame_entries: list[tuple[str, float]] = []
+        try:
+            for ts in timestamps:
+                frame_output = os.path.join(
+                    os.getcwd(), self.get_temporary_filename(suffix=".png", force_random=True)
+                )
+                command = [
+                    ffmpeg_path, "-hide_banner", "-loglevel", "error", "-y",
+                    "-ss", f"{ts:.3f}", "-i", video_path, "-frames:v", "1", frame_output
+                ]
+                try:
+                    subprocess.run(command, check=True)  # noqa S603
+                    if os.path.exists(frame_output):
+                        frame_entries.append((frame_output, ts))
+                except subprocess.CalledProcessError:
+                    continue
+
+            if not frame_entries:
+                return None
+
+            collage_path = os.path.join(
+                os.getcwd(), self.get_temporary_filename(suffix=".png", force_random=True)
+            )
+            self._compose_frame_grid(frame_entries, collage_path)
+            if os.path.exists(collage_path):
+                return os.path.basename(collage_path)
+
+            return None
+        finally:
+            for frame_path, _ in frame_entries:
+                try:
+                    os.remove(frame_path)
+                except OSError:
+                    pass
+
+    def _compose_frame_grid(self, frame_entries: list[tuple[str, float]], collage_path: str) -> None:
+        images = [(Image.open(path).convert("RGB"), timestamp) for path, timestamp in frame_entries]
+        if not images:
+            return
+
+        try:
+            resample = Image.Resampling.LANCZOS
+        except AttributeError:
+            resample = getattr(Image, "LANCZOS", 1)
+
+        base_width, base_height = images[0][0].size
+        scale = min(1.0, 360 / base_width) if base_width else 1.0
+        target_width = max(1, int(base_width * scale))
+        target_height = max(1, int(base_height * scale))
+        font = ImageFont.load_default()
+        resized: list[Image.Image] = []
+        for img, timestamp in images:
+            resized_img = img.resize((target_width, target_height), resample=resample)
+            draw = ImageDraw.Draw(resized_img)
+            timestamp_text = f"{timestamp:.2f}s"
+            bbox = draw.textbbox((0, 0), timestamp_text, font=font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
+            padding = 4
+            overlay_x = padding
+            overlay_y = max(0, target_height - text_height - padding - 2)
+            draw.rectangle(
+                [
+                    overlay_x - 2,
+                    overlay_y - 2,
+                    overlay_x + text_width + 4,
+                    overlay_y + text_height + 4,
+                ],
+                fill=(0, 0, 0),
+            )
+            draw.text(
+                (overlay_x, overlay_y),
+                timestamp_text,
+                fill=(255, 255, 255),
+                font=font,
+            )
+            resized.append(resized_img)
+
+        grid_size = 3
+        grid_image = Image.new("RGB", (target_width * grid_size, target_height * grid_size), (20, 20, 20))
+
+        for position in range(grid_size * grid_size):
+            row = position // grid_size
+            col = position % grid_size
+            x = col * target_width
+            y = row * target_height
+            if position < len(resized):
+                grid_image.paste(resized[position], (x, y))
+
+        grid_image.save(collage_path, format="PNG")
+
+    def _select_keyframe_timestamps(self, video_path: str, ffprobe_path: str) -> list[float]:
+        duration = self._get_video_duration(video_path, ffprobe_path)
+        if duration <= 0:
+            return [0.0]
+
+        timestamps: list[float] = []
+        for index in range(PLAYWRIGHT_MAX_FRAMES):
+            if PLAYWRIGHT_MAX_FRAMES == 1:
+                ts = 0.0
+            else:
+                ts = duration * index / (PLAYWRIGHT_MAX_FRAMES - 1)
+            timestamps.append(ts)
+
+        unique_timestamps: list[float] = []
+        for ts in timestamps:
+            if not unique_timestamps or abs(ts - unique_timestamps[-1]) > 1e-6:
+                unique_timestamps.append(ts)
+        return unique_timestamps
+
+    def _get_video_duration(self, video_path: str, ffprobe_path: str) -> float:
+        try:
+            completed = subprocess.run(  # noqa S603
+                [
+                    ffprobe_path,
+                    "-v", "error",
+                    "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    video_path,
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(f"Failed to read video duration: {exc}") from exc
+
+        try:
+            return max(0.0, float(completed.stdout.strip()))
+        except ValueError:
+            return 0.0
+
+    def _ensure_ffmpeg_available(self) -> tuple[str, str]:
+        ffmpeg_path = shutil.which("ffmpeg")
+        ffprobe_path = shutil.which("ffprobe")
+        missing = []
+        if not ffmpeg_path:
+            missing.append("ffmpeg")
+        if not ffprobe_path:
+            missing.append("ffprobe")
+        if missing:
+            raise RuntimeError(
+                "The autoplaywright feature requires ffmpeg/ffprobe but the following binaries were not found: "
+                + ", ".join(missing)
+            )
+        assert ffmpeg_path is not None and ffprobe_path is not None
+        return ffmpeg_path, ffprobe_path
+
     @staticmethod
     def get_global_tex_vars() -> dict[str, str]:
         return {"version": __version__}
@@ -371,9 +649,24 @@ class PdfReport():
             return "test" + suffix
         return "".join(random.choices(string.ascii_uppercase, k=10)) + suffix # noqa S311
 
-    def __init__(self, document: Document):
+    def __init__(
+        self,
+        document: Document,
+        *,
+        playwright_dir: Optional[str] = None,
+        top_left_logo_path: Optional[str] = None,
+        top_right_logo_path: Optional[str] = None,
+    ):
         self.document = document
         self.original_working_directory = os.getcwd()
+        self.top_left_logo_path = top_left_logo_path
+        self.top_right_logo_path = top_right_logo_path
+        self.playwright_dir: Optional[str] = None
+        if playwright_dir:
+            resolved_playwright_dir = os.path.abspath(playwright_dir)
+            if not os.path.isdir(resolved_playwright_dir):
+                raise FileNotFoundError(f"Playwright directory does not exist: {resolved_playwright_dir}")
+            self.playwright_dir = resolved_playwright_dir
 
         # Build a set containing all the test and requiremnt IDs
         self.unique_ids = set()
@@ -383,6 +676,28 @@ class PdfReport():
         for req_page in self.document.requirements:
             for requirement in req_page.items:
                 self.unique_ids.add(requirement.req_id)
+
+    @staticmethod
+    def _logo_basename(path: Optional[str], default_name: str) -> str:
+        if path:
+            return os.path.basename(path)
+        return default_name
+
+    def _ensure_logo(
+        self,
+        *,
+        filename: str,
+        resource_name: str,
+        provided_path: Optional[str],
+    ) -> None:
+        destination = os.path.join(os.getcwd(), filename)
+        if provided_path:
+            if not os.path.isfile(provided_path):
+                raise FileNotFoundError(f"Logo path does not exist: {provided_path}")
+            shutil.copy(provided_path, destination)
+        else:
+            with open(destination, "wb") as f:
+                f.write(load_resource("traceflow.res", resource_name))
 
     def render(self) -> bytes:
 
@@ -394,6 +709,11 @@ class PdfReport():
         tex_vars["report_title"] = self.process_text(
             self.document.name + " " + self.document.version + ": Validation Pack"
         )
+        top_left_logo_name = PdfReport._logo_basename(self.top_left_logo_path, "traceflow-logo.png")
+        top_right_logo_name = PdfReport._logo_basename(self.top_right_logo_path, "voxelflow-logo.png")
+
+        tex_vars["top_left_logo"] = top_left_logo_name
+        tex_vars["top_right_logo"] = top_right_logo_name
         document = header.render(**tex_vars)
 
         # Create the "report" directory if it doesn't exist
@@ -438,10 +758,16 @@ class PdfReport():
 
             document += r"%%%%%%%%%%% END DOCUMENT" + "\n\n" r"\label{LastPage}" + "\n\n" + r"\end{document}" + "\n"
 
-            with open("traceflow-logo.png", "wb") as f:
-                f.write(load_resource("traceflow.res", "traceflow-logo.png"))
-            with open("voxelflow-logo.png", "wb") as f:
-                f.write(load_resource("traceflow.res", "voxelflow-logo.png"))
+            self._ensure_logo(
+                filename=top_left_logo_name,
+                resource_name="traceflow-logo.png",
+                provided_path=self.top_left_logo_path,
+            )
+            self._ensure_logo(
+                filename=top_right_logo_name,
+                resource_name="voxelflow-logo.png",
+                provided_path=self.top_right_logo_path,
+            )
 
             # Recursively copy all files from the document.input_dir folder to the current folder
             for root, _, files in os.walk(self.document.input_dir):
@@ -453,24 +779,28 @@ class PdfReport():
             with open(output_filename, "w") as output_file:
                 output_file.write(document)
 
+            pdflatex_command = f"pdflatex -interaction=nonstopmode -halt-on-error {output_filename}"
             try:
                 subprocess.check_output(
-                    f"pdflatex -halt-on-error {output_filename}",
+                    pdflatex_command,
                     shell=True,  # noqa: S602
                     stderr=subprocess.STDOUT,
                     universal_newlines=True,
+                    errors="replace",
                 )  # nopep8
                 subprocess.check_output(
-                    f"pdflatex -halt-on-error {output_filename}",
+                    pdflatex_command,
                     shell=True,  # noqa: S602
                     stderr=subprocess.STDOUT,
                     universal_newlines=True,
+                    errors="replace",
                 )  # nopep8
                 subprocess.check_output(
-                    f"pdflatex -halt-on-error {output_filename}",
+                    pdflatex_command,
                     shell=True,  # noqa: S602
                     stderr=subprocess.STDOUT,
                     universal_newlines=True,
+                    errors="replace",
                 )  # nopep8
             except subprocess.CalledProcessError as exc:
                 print("Status : FAIL", exc.returncode, exc.output)

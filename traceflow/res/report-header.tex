@@ -18,6 +18,7 @@
 \usepackage{adjustbox}
 \usepackage{diagbox}
 \usepackage{pdflscape}
+\usepackage{float}
 
 \newcolumntype{R}[2]{%
     >{\adjustbox{angle=#1,lap=\width-(#2)}\bgroup}%
@@ -78,13 +79,13 @@
 \fancypagestyle{plain}{
   \fancyhf{}% Clear header/footer
 	\fancyhead[L]{
-	\includegraphics[width=4cm,keepaspectratio]{traceflow-logo.png}
+	\includegraphics[width=4cm,keepaspectratio]{\VAR{top_left_logo}}
 	}
 	\fancyhead[R]{
         \textbf{\Large{\VAR{report_title}}}
     }
 	\lfoot{
-	\includegraphics[width=3cm,keepaspectratio]{voxelflow-logo.png}
+	\includegraphics[width=3cm,keepaspectratio]{\VAR{top_right_logo}}
 	}
 	\rfoot{\emph{Page \thepage\ of \pageref{LastPage}}}
 	\cfoot{Report produced using TraceFlow \VAR{version} }

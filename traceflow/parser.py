@@ -232,11 +232,11 @@ def is_ast_element_heading(elem: dict) -> int:
 
 def get_heading_text(elem: dict) -> str:
     text: str = ""
-    for elem in elem["children"]:
-        if elem["type"] == "text":
-            text += elem["text"]
-        if elem["type"] == "codespan":
-            text += f" `{elem['text']}` "
+    for child in elem["children"]:
+        if child["type"] == "text":
+            text += child["text"]
+        if child["type"] == "codespan":
+            text += f" `{child['text']}` "
     return text.strip()
 
 

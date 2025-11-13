@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=68.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "traceflow-rtm"
+version = "0.0.22"
+description = "A Python library for managing software development documentation and testing that automates the generation of PDFs, validation packs, and traceability matrices."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "LicenseRef-Commercial"
+license-files = ["LICENCE"]
+authors = [
+    {name = "Bioxydyn Ltd"},
+]
+dependencies = [
+    "cairosvg==2.7.1",
+    "Jinja2==3.1.4",
+    "latex==0.7.0",
+    "mistune==2.0.5",
+    "pyyaml==6.0.1",
+    "Pillow==10.0.1",
+    "cyclopts==3.24.0",
+]
+
+[project.scripts]
+traceflow = "traceflow.__main__:main"
+
+[project.optional-dependencies]
+dev = [
+    "coverage",
+    "flake8",
+    "flake8-annotations",
+    "flake8-bandit",
+    "flake8-broken-line",
+    "flake8-bugbear",
+    "flake8-builtins",
+    "flake8-comprehensions",
+    "flake8-eradicate",
+    "flake8-executable",
+    "flake8-fixme",
+    "flake8-printf-formatting",
+    "flake8-return",
+    "flake8-walrus",
+    "pytest",
+    "ty==0.0.1a26",
+    "types-PyYAML",
+]
+
+[dependency-groups]
+dev = [
+    "coverage",
+    "flake8",
+    "flake8-annotations",
+    "flake8-bandit",
+    "flake8-broken-line",
+    "flake8-bugbear",
+    "flake8-builtins",
+    "flake8-comprehensions",
+    "flake8-eradicate",
+    "flake8-executable",
+    "flake8-fixme",
+    "flake8-printf-formatting",
+    "flake8-return",
+    "flake8-walrus",
+    "pytest",
+    "ty==0.0.1a26",
+    "types-PyYAML",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["traceflow*"]
