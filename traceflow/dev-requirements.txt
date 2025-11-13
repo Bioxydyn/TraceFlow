@@ -12,5 +12,6 @@ flake8-executable
 flake8-bandit
 flake8-annotations
 pytest
-mypy
 coverage
+ty==0.0.1a26
+types-PyYAML
