@@ -3,9 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "test": "node test.js"
+    "test": "playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "^1.56.1",
     "playwright": "^1.48.0"
   }
 }

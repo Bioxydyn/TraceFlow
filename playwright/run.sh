@@ -5,4 +5,4 @@ npm install
 npx playwright install
 
 # 3. Run the test
-npm test
+npm test -- --video=run1.webm
