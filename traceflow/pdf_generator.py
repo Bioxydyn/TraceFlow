@@ -10,7 +10,14 @@ import string
 from typing import Generator, Optional
 
 import latex.jinja2
-import cairosvg
+
+try:
+    import cairosvg
+except OSError as exc:
+    cairosvg = None  # type: ignore[assignment]
+    _CAIROSVG_IMPORT_ERROR = exc
+else:
+    _CAIROSVG_IMPORT_ERROR = None
 
 from traceflow.parser import Document, RequirementDocument, parse_markdown
 from traceflow.version import __version__
@@ -327,6 +334,11 @@ class PdfReport():
 
             subprocess.run(["mmdc", "-i", mmd_path, "-o", svg_path], check=True)  # noqa S607, S603
 
+            if cairosvg is None:
+                raise RuntimeError(
+                    "Rendering mermaid diagrams requires cairosvg, but importing it failed"
+                    f" with: {_CAIROSVG_IMPORT_ERROR}"
+                )
             # Convert the SVG to PDF
             pdf_path = svg_path.replace(".svg", ".pdf")
             cairosvg.svg2pdf(url=svg_path, write_to=pdf_path)
@@ -371,9 +383,17 @@ class PdfReport():
             return "test" + suffix
         return "".join(random.choices(string.ascii_uppercase, k=10)) + suffix # noqa S311
 
-    def __init__(self, document: Document):
+    def __init__(
+        self,
+        document: Document,
+        *,
+        top_left_logo_path: Optional[str] = None,
+        top_right_logo_path: Optional[str] = None,
+    ):
         self.document = document
         self.original_working_directory = os.getcwd()
+        self.top_left_logo_path = top_left_logo_path
+        self.top_right_logo_path = top_right_logo_path
 
         # Build a set containing all the test and requiremnt IDs
         self.unique_ids = set()
@@ -383,6 +403,28 @@ class PdfReport():
         for req_page in self.document.requirements:
             for requirement in req_page.items:
                 self.unique_ids.add(requirement.req_id)
+
+    @staticmethod
+    def _logo_basename(path: Optional[str], default_name: str) -> str:
+        if path:
+            return os.path.basename(path)
+        return default_name
+
+    def _ensure_logo(
+        self,
+        *,
+        filename: str,
+        resource_name: str,
+        provided_path: Optional[str],
+    ) -> None:
+        destination = os.path.join(os.getcwd(), filename)
+        if provided_path:
+            if not os.path.isfile(provided_path):
+                raise FileNotFoundError(f"Logo path does not exist: {provided_path}")
+            shutil.copy(provided_path, destination)
+        else:
+            with open(destination, "wb") as f:
+                f.write(load_resource("traceflow.res", resource_name))
 
     def render(self) -> bytes:
 
@@ -394,6 +436,11 @@ class PdfReport():
         tex_vars["report_title"] = self.process_text(
             self.document.name + " " + self.document.version + ": Validation Pack"
         )
+        top_left_logo_name = PdfReport._logo_basename(self.top_left_logo_path, "traceflow-logo.png")
+        top_right_logo_name = PdfReport._logo_basename(self.top_right_logo_path, "voxelflow-logo.png")
+
+        tex_vars["top_left_logo"] = top_left_logo_name
+        tex_vars["top_right_logo"] = top_right_logo_name
         document = header.render(**tex_vars)
 
         # Create the "report" directory if it doesn't exist
@@ -438,10 +485,16 @@ class PdfReport():
 
             document += r"%%%%%%%%%%% END DOCUMENT" + "\n\n" r"\label{LastPage}" + "\n\n" + r"\end{document}" + "\n"
 
-            with open("traceflow-logo.png", "wb") as f:
-                f.write(load_resource("traceflow.res", "traceflow-logo.png"))
-            with open("voxelflow-logo.png", "wb") as f:
-                f.write(load_resource("traceflow.res", "voxelflow-logo.png"))
+            self._ensure_logo(
+                filename=top_left_logo_name,
+                resource_name="traceflow-logo.png",
+                provided_path=self.top_left_logo_path,
+            )
+            self._ensure_logo(
+                filename=top_right_logo_name,
+                resource_name="voxelflow-logo.png",
+                provided_path=self.top_right_logo_path,
+            )
 
             # Recursively copy all files from the document.input_dir folder to the current folder
             for root, _, files in os.walk(self.document.input_dir):
@@ -453,21 +506,22 @@ class PdfReport():
             with open(output_filename, "w") as output_file:
                 output_file.write(document)
 
+            pdflatex_command = f"pdflatex -interaction=nonstopmode -halt-on-error {output_filename}"
             try:
                 subprocess.check_output(
-                    f"pdflatex -halt-on-error {output_filename}",
+                    pdflatex_command,
                     shell=True,  # noqa: S602
                     stderr=subprocess.STDOUT,
                     universal_newlines=True,
                 )  # nopep8
                 subprocess.check_output(
-                    f"pdflatex -halt-on-error {output_filename}",
+                    pdflatex_command,
                     shell=True,  # noqa: S602
                     stderr=subprocess.STDOUT,
                     universal_newlines=True,
                 )  # nopep8
                 subprocess.check_output(
-                    f"pdflatex -halt-on-error {output_filename}",
+                    pdflatex_command,
                     shell=True,  # noqa: S602
                     stderr=subprocess.STDOUT,
                     universal_newlines=True,

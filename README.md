@@ -38,7 +38,18 @@ Create your Markdown files based on the provided examples:
 
 With your Markdown files in place, you can run TraceFlow using the following command:
 
-    traceflow path/to/project-docs project.pdf
+    traceflow path/to/project-docs 1.0.0 project.pdf
+
+The second argument is the version string that will be shown on the report (change it to whatever release identifier you need).
+
+Two optional arguments let you replace the logos that appear in the header (top-left) and footer (top-right):
+
+- `--top-left-logo` (alias `--traceflow-logo`) points to the image shown in the top-left of every page (header).
+- `--top-right-logo` (alias `--voxelflow-logo`) points to the image shown in the bottom-left of every page (footer).
+
+If you do not pass these options, TraceFlow falls back to the packaged images in `traceflow/res/`.
+
+    traceflow path/to/project-docs 1.0.0 project.pdf --top-left-logo assets/traceflow.png --top-right-logo assets/voxelflow.png
 
 This command will generate a PDF for all of your documentation and test cases, as well as a validation pack and traceability matrix.
 
