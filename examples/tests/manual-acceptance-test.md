@@ -39,6 +39,8 @@ The test should pass successfully.
 
 ### Test Outcome:
 
-```autotest
-pytest --disable-warnings -sv tests/test_hello_world.py
+```autoplaywright
+0001-test-counter
 ```
+
+> The `autoplaywright` block runs the Playwright sample located in the `playwright/` directory and captures the video, stdout/stderr, and a 3×3 key frame grid.

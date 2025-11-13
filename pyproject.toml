@@ -19,6 +19,7 @@ dependencies = [
     "latex==0.7.0",
     "mistune==2.0.5",
     "pyyaml==6.0.1",
+    "Pillow==10.0.1",
     "cyclopts==3.24.0",
 ]
 

@@ -53,6 +53,8 @@ If you do not pass these options, TraceFlow falls back to the packaged images in
 
 This command will generate a PDF for all of your documentation and test cases, as well as a validation pack and traceability matrix.
 
+If your documentation contains `autoplaywright` test blocks that capture Playwright runs, append `--playwright-dir PATH` so TraceFlow can invoke the runner and gather the videos + logs that back these tests.
+
 ### Requirements
 ```
 # Requirements

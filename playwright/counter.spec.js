@@ -2,7 +2,7 @@
 const { test, expect } = require('@playwright/test');
 const path = require('path');
 
-test('counter increments once', async ({ page }) => {
+test('0001-test-counter', async ({ page }) => {
   await page.goto('file://' + path.join(__dirname, 'index.html'));
 
   await expect(page.locator('#count')).toHaveText('0');

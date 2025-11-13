@@ -26,7 +26,8 @@ TMP_OUTPUT=$(mktemp)
 # Run Playwright, capturing output while also displaying it live
 # tee duplicates output: both to terminal AND TMP_OUTPUT
 set +e
-npx playwright test -g "$TEST_NAME" 2>&1 | tee "$TMP_OUTPUT"
+set +e
+NODE_NO_WARNINGS=1 npx playwright test -g "$TEST_NAME" 2>&1 | tee "$TMP_OUTPUT"
 TEST_EXIT_CODE=${PIPESTATUS[0]}
 set -e
 
