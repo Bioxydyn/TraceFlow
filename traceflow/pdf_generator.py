@@ -10,7 +10,7 @@ import string
 from typing import Generator, Optional
 
 import latex.jinja2
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 try:
     import cairosvg
@@ -24,6 +24,21 @@ from traceflow.parser import Document, RequirementDocument, parse_markdown
 from traceflow.version import __version__
 
 _latex_jinja2_env = latex.jinja2.make_env()
+
+PLAYWRIGHT_MAX_FRAMES = 9
+_PLAYWRIGHT_LOG_CHAR_MAP: dict[str, str] = {
+    "✓": "[PASS]",
+    "✔": "[PASS]",
+    "›": ">",
+    "➜": "->",
+    "…": "...",
+    "–": "-",
+    "—": "--",
+    "‘": "'",
+    "’": "'",
+    "“": '"',
+    "”": '"',
+}
 
 PLAYWRIGHT_MAX_FRAMES = 9
 
@@ -409,15 +424,9 @@ class PdfReport():
         if notes_text:
             body.append(f"\\textbf{{Test Notes:}} {self.process_text(notes_text)} \\\\")
 
-        if os.path.exists(video_path):
-            video_name = os.path.basename(video_path)
-            body.append(f"\\textbf{{Video recording:}} {self.process_text(video_name)} \\\\")
-        else:
-            body.append("\\textbf{Video recording:} Not captured \\\\")
-
         if grid_basename:
             body.append(
-                "\\begin{figure}[h]\n"
+                "\\begin{figure}[H]\n"
                 "\\centering\n"
                 f"\\includegraphics[width=\\linewidth]{{{grid_basename}}}\n"
                 f"\\caption{{Key frames captured from {self.process_text(test_name)}}}\n"
@@ -464,7 +473,11 @@ class PdfReport():
             return "No Playwright output captured."
         with open(log_path, "r", encoding="utf-8", errors="replace") as log_file:
             log_content = log_file.read()
-        sanitized = log_content.encode("ascii", "backslashreplace").decode("ascii")
+        sanitized = log_content
+        for original, replacement in _PLAYWRIGHT_LOG_CHAR_MAP.items():
+            sanitized = sanitized.replace(original, replacement)
+        sanitized = sanitized.replace("\r\n", "\n")
+        sanitized = ''.join(ch if ord(ch) < 128 else "?" for ch in sanitized)
         if len(sanitized) > 40000:
             return sanitized[:40000] + " ... [truncated]"
         return sanitized
@@ -478,7 +491,7 @@ class PdfReport():
         if not timestamps:
             return None
 
-        frame_paths: list[str] = []
+        frame_entries: list[tuple[str, float]] = []
         try:
             for ts in timestamps:
                 frame_output = os.path.join(
@@ -491,30 +504,30 @@ class PdfReport():
                 try:
                     subprocess.run(command, check=True)  # noqa S603
                     if os.path.exists(frame_output):
-                        frame_paths.append(frame_output)
+                        frame_entries.append((frame_output, ts))
                 except subprocess.CalledProcessError:
                     continue
 
-            if not frame_paths:
+            if not frame_entries:
                 return None
 
             collage_path = os.path.join(
                 os.getcwd(), self.get_temporary_filename(suffix=".png", force_random=True)
             )
-            self._compose_frame_grid(frame_paths, collage_path)
+            self._compose_frame_grid(frame_entries, collage_path)
             if os.path.exists(collage_path):
                 return os.path.basename(collage_path)
 
             return None
         finally:
-            for frame_path in frame_paths:
+            for frame_path, _ in frame_entries:
                 try:
                     os.remove(frame_path)
                 except OSError:
                     pass
 
-    def _compose_frame_grid(self, frame_paths: list[str], collage_path: str) -> None:
-        images = [Image.open(path).convert("RGB") for path in frame_paths]
+    def _compose_frame_grid(self, frame_entries: list[tuple[str, float]], collage_path: str) -> None:
+        images = [(Image.open(path).convert("RGB"), timestamp) for path, timestamp in frame_entries]
         if not images:
             return
 
@@ -523,11 +536,38 @@ class PdfReport():
         except AttributeError:
             resample = getattr(Image, "LANCZOS", 1)
 
-        base_width, base_height = images[0].size
+        base_width, base_height = images[0][0].size
         scale = min(1.0, 360 / base_width) if base_width else 1.0
         target_width = max(1, int(base_width * scale))
         target_height = max(1, int(base_height * scale))
-        resized = [img.resize((target_width, target_height), resample=resample) for img in images]
+        font = ImageFont.load_default()
+        resized: list[Image.Image] = []
+        for img, timestamp in images:
+            resized_img = img.resize((target_width, target_height), resample=resample)
+            draw = ImageDraw.Draw(resized_img)
+            timestamp_text = f"{timestamp:.2f}s"
+            bbox = draw.textbbox((0, 0), timestamp_text, font=font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
+            padding = 4
+            overlay_x = padding
+            overlay_y = max(0, target_height - text_height - padding - 2)
+            draw.rectangle(
+                [
+                    overlay_x - 2,
+                    overlay_y - 2,
+                    overlay_x + text_width + 4,
+                    overlay_y + text_height + 4,
+                ],
+                fill=(0, 0, 0),
+            )
+            draw.text(
+                (overlay_x, overlay_y),
+                timestamp_text,
+                fill=(255, 255, 255),
+                font=font,
+            )
+            resized.append(resized_img)
 
         grid_size = 3
         grid_image = Image.new("RGB", (target_width * grid_size, target_height * grid_size), (20, 20, 20))

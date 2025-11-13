@@ -11,6 +11,7 @@ By leveraging TraceFlow, you can:
 - Generate a traceability matrix linking all requirements to all tests.
 - Create fillable PDF forms for manual tests.
 - Run automated tests and capture their output as Markdown, then include them in the PDF report.
+- The result will look something [like this](example.pdf)
 
 ## Getting Started
 
@@ -52,6 +53,16 @@ If you do not pass these options, TraceFlow falls back to the packaged images in
     traceflow path/to/project-docs 1.0.0 project.pdf --top-left-logo assets/traceflow.png --top-right-logo assets/voxelflow.png
 
 This command will generate a PDF for all of your documentation and test cases, as well as a validation pack and traceability matrix.
+
+### Running the Playwright example
+
+TraceFlow includes the `examples` directory, which demonstrates `autoplaywright` tests that invoke the Playwright scripts in this repo. To reproduce that example, run:
+
+```
+uv run traceflow examples 1.0.0 test.pdf --playwright-dir playwright/
+```
+
+On macOS you may need to prefix the command with `DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib` so the bundled `cairosvg` finds `libcairo`. This example writes `test.pdf` into the current directory, stores temporary LaTeX artifacts in `report/`, and captures the Playwright video and logs via `playwright/run-test-video.sh`.
 
 If your documentation contains `autoplaywright` test blocks that capture Playwright runs, append `--playwright-dir PATH` so TraceFlow can invoke the runner and gather the videos + logs that back these tests.
 
