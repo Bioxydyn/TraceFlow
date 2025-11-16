@@ -163,3 +163,33 @@ To address **REQ-003**, we will create a Python API for building and executing i
 - Functions to connect and execute pipeline components
 - Compliance checks to ensure the pipeline adheres to the required standards
 ```
+
+### Risk Register Example
+TraceFlow now understands risk registers and renders them on A3 landscape pages with colour-coded severity, probability, and residual risk ratings.
+
+```
+# Risk Register
+
+## RISK-001: Incorrect study-patient association
+
+Hazardous Situation: Clinician views wrong patient's images believing they are correct
+Harm: Misdiagnosis, inappropriate treatment
+Cause: Race condition during HL7/DICOM message processing leading to incorrect PatientID or AccessionNumber assignment
+Severity: High
+Probability: Medium
+Controls: Unit/integration tests for identifier logic (REQ-005, TEST-002)
+Residual Severity: Medium
+Residual Probability: Low
+Residual Risk: Operator review plus automatic quarantine when mismatches occur
+```
+
+### Generic Document Example
+Any additional Markdown files (e.g., Installation/User Specifications) are included verbatim and can link to requirements, tests, or risks using their IDs:
+
+```
+# Installation & User Specification
+
+- Execute TEST-003 and record the release tag.
+- Confirm the identifier reconciliation feature (REQ-005) is active before go-live.
+- Review RISK-001 and RISK-002 residual risk statements with the clinical safety officer.
+```

@@ -1,25 +1,62 @@
 # Functional Design Spec
 
-## User Authentication
+This document provides a high-level architectural view of the TraceFlow demo and links each design decision to the requirements, tests, and clinical safety risks that drive them. Refer to **RISK-001** when assessing identifier safety controls described below.
 
-To address **REQ-001**, we will implement an authentication system using JWT (JSON Web Tokens). The system will include the following components:
+## Architecture overview
 
-- A login page with input fields for email and password
-- A backend API endpoint to validate user credentials
-- Middleware to validate JWT tokens for accessing protected resources
+The system is split into ingestion, orchestration, and presentation tiers in order to satisfy **REQ-001** through **REQ-004** while maintaining a clean boundary for audit logging (**REQ-005**).
 
-## MRI Dataset Import
+```mermaid
+graph TD
+    subgraph Ingestion
+        HL7[HL7 listener]
+        DICOM[DICOM listener]
+    end
+    subgraph Core Platform
+        Auth[Auth Service]
+        Reconcile[Identifier Reconciliation Engine]
+        Pipeline[Analysis Pipeline API]
+        Audit[Audit Ledger]
+    end
+    subgraph Presentation
+        UI[Clinician UI]
+    end
+    HL7 --> Reconcile
+    DICOM --> Reconcile
+    Reconcile --> Audit
+    Reconcile --> Pipeline
+    Auth --> UI
+    Pipeline --> UI
+    UI --> Audit
+```
 
-To address **REQ-002**, we will develop a module to import MRI datasets in DICOM format. The module will include:
+## Identifier reconciliation engine (REQ-005, RISK-001, TEST-002)
 
-- A function to parse DICOM files
-- Error handling for unsupported or malformed files
-- Integration with the existing data storage system
+The reconciliation engine protects against the hazardous situation captured in **RISK-001** where patient and study identifiers might be mismatched. Design goals:
 
-## Image Analysis Pipeline
+- Compare the DICOM `PatientID` and `AccessionNumber` with the HL7 metadata stream.
+- If mismatches are detected, the transaction is quarantined and **TEST-002** exercises the operator override.
+- Successful transactions emit structured audit events so **REQ-005** is met.
 
-To address **REQ-003**, we will create a Python API for building and executing image analysis pipelines. This API will include:
+### UML activity view
 
-- A set of Python classes to represent pipeline components
-- Functions to connect and execute pipeline components
-- Compliance checks to ensure the pipeline adheres to the required standards
+1. Receive the incoming DICOM objects and perform schema checks.
+2. Compare HL7 metadata with extracted tags and branch depending on whether identifiers match.
+3. Persist successful studies and emit reconciliation metrics for **RISK-001**.
+4. Quarantine mismatches and require an operator acknowledgement that is captured by **TEST-002**.
+
+## Authentication and authorization (REQ-001, TEST-001)
+
+Authentication relies on OpenID Connect so automated tests (**TEST-001**) can exercise both success and failure paths. Tokens carry the clinician's study permissions, and the middleware enforces them for every API endpoint.
+
+## Imaging pipeline (REQ-002, REQ-003, RISK-002)
+
+The MRI import module normalizes DICOM before invoking the analysis pipelines described in **REQ-003**. The pipelines emit validation artifacts:
+
+- DICOM specific logs for regulatory review.
+- Image-derived measurements tied to their source requirement/test pairs.
+- Alerts for saturation or out-of-range values, contributing to **RISK-002** mitigations.
+
+## Operational documents (General IUS)
+
+Operational guidance for installations is maintained in `docs/ius.md`. That supplemental document links directly to **TEST-003** for continuous integration evidence and references **RISK-002** to remind the operator of the residual hazards.

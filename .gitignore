@@ -166,3 +166,5 @@ test.pdf
 playwright/node_modules/
 *.webm
 playwright/test-results/
+
+coverage.lcov
