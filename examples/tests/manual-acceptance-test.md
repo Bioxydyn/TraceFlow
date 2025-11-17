@@ -28,10 +28,12 @@ The user is logged in and redirected to the main dashboard.
 ## TEST-002: Automatic Playwright test
 
 **Requirement ID:** REQ-003
+**Requirement ID:** REQ-005
 
 ### Test Steps:
 
 1. The `autoplaywright` block runs the Playwright sample located in the `playwright/` directory and captures the video, stdout/stderr, and a 3×3 key frame grid from the test execution.
+2. The scripted run intentionally drives a patient-identifier edit workflow to demonstrate the mitigation for **RISK-001**.
 
 ### Expected Result:
 
@@ -50,6 +52,7 @@ The test should pass successfully.
 ### Test Steps:
 
 1. This `autotest` block demonstrates running a simple pytest command as part of the report.
+2. The quick-running suite doubles as a guardrail for **RISK-002** and **RISK-003**; failures block deployments.
 
 ### Expected Result:
 

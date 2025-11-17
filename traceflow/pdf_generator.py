@@ -20,7 +20,13 @@ except OSError as exc:
 else:
     _CAIROSVG_IMPORT_ERROR = None
 
-from traceflow.parser import Document, RequirementDocument, parse_markdown
+from traceflow.parser import (
+    Document,
+    MarkdownDocument,
+    RequirementDocument,
+    RiskDocument,
+    parse_markdown,
+)
 from traceflow.version import __version__
 
 _latex_jinja2_env = latex.jinja2.make_env()
@@ -71,6 +77,36 @@ def isolated_filesystem(temp_path: Optional[str] = None) -> Generator:
 
 
 class PdfReport():
+    _RISK_SCALE: dict[str, int] = {
+        "very high": 5,
+        "critical": 5,
+        "catastrophic": 5,
+        "extreme": 5,
+        "high": 4,
+        "major": 4,
+        "serious": 4,
+        "frequent": 4,
+        "medium": 3,
+        "moderate": 3,
+        "occasional": 3,
+        "possible": 3,
+        "low": 1,
+        "minor": 1,
+        "remote": 1,
+        "unlikely": 1,
+        "very low": 1,
+        "negligible": 1,
+        "rare": 1,
+        "improbable": 1,
+    }
+
+    _RISK_LEVELS: list[tuple[int, str, str]] = [
+        (16, "Critical", "red!60"),
+        (9, "High", "orange!65"),
+        (4, "Medium", "yellow!40"),
+        (1, "Low", "green!35"),
+    ]
+
     @staticmethod
     def process_text_impl(text: str, unique_ids: set[str]) -> str:
 
@@ -80,9 +116,14 @@ class PdfReport():
 
         # 2. For each word, check if it is a unique ID. unique_ids is a set, so this is O(1)
         for index, word in enumerate(words):
-            altered_word = word.replace(":", "")
-            if altered_word in unique_ids:
-                words[index] = f"\\hyperref[{altered_word}]{{{word}}}"
+            leading = len(word) - len(word.lstrip("()[]{}.,;:<>"))
+            trailing = len(word.rstrip("()[]{}.,;:<>"))
+            prefix = word[:leading]
+            suffix = word[trailing:]
+            core = word[leading:trailing] if trailing > leading else word[leading:]
+            altered_word = core.replace(":", "")
+            if altered_word in unique_ids and core:
+                words[index] = f"{prefix}\\hyperref[{altered_word}]{{{core}}}{suffix}"
 
         # 3. Rebuild the text
         new_text = " ".join(words)
@@ -107,6 +148,46 @@ class PdfReport():
 
     def process_text(self, text: str) -> str:
         return self.process_text_impl(text, self.unique_ids)
+
+    @staticmethod
+    def _build_label_from_text(prefix: str, text: str) -> str:
+        base = re.sub(r"[^A-Za-z0-9]+", "-", text).strip("-").lower()
+        if not base:
+            base = "doc"
+        return f"{prefix}-{base}"
+
+    @classmethod
+    def _score_risk_dimension(cls: type['PdfReport'], value: str) -> int:
+        if not value:
+            return 0
+        digits = re.findall(r"\d+", value)
+        if digits:
+            try:
+                return int(digits[0])
+            except ValueError:
+                pass
+        normalised = re.sub(r"[^a-z ]", "", value.lower()).strip()
+        return cls._RISK_SCALE.get(normalised, 0)
+
+    @classmethod
+    def _evaluate_risk_rating(cls: type['PdfReport'], severity: str, probability: str) -> tuple[str, int, str]:
+        severity_score = cls._score_risk_dimension(severity)
+        probability_score = cls._score_risk_dimension(probability)
+        score = severity_score * probability_score
+        if score == 0:
+            return "", 0, ""
+        for threshold, label, colour in cls._RISK_LEVELS:
+            if score >= threshold:
+                return label, score, colour
+        return "", score, ""
+
+    def _format_risk_rating_cell(self, label: str, score: int, colour: str) -> str:
+        if not label:
+            return ""
+        cell_text = self.process_text(f"{label} ({score})")
+        if colour:
+            return f"\\cellcolor{{{colour}}}{cell_text}"
+        return cell_text
 
     def build_traceability_matrix(self, req_page: RequirementDocument) -> str:
         # Display the traceability matrix
@@ -174,6 +255,149 @@ class PdfReport():
 
         return table
 
+    def render_markdown_document(self, doc: MarkdownDocument) -> str:
+        heading = doc.title
+        if doc.category == "design":
+            heading = f"Design - {doc.title}"
+        elif doc.category not in {"general", "design"}:
+            heading = f"{doc.category.title()} - {doc.title}"
+        label = self._build_label_from_text(doc.category or "doc", doc.title)
+        latex = "\\section{" + self.process_text(heading) + "}\\label{" + label + "}\n\n"
+        latex += self.md_to_latex(doc.content)
+        latex += "\n\n\\newpage\n\n"
+        return latex
+
+    def build_risk_register(self, risk_page: RiskDocument) -> str:
+        if not risk_page.items:
+            return ""
+
+        column_fragments = [
+            "@{}p{4.0cm}",
+            "p{5.0cm}",
+            "p{4.2cm}",
+            "p{4.2cm}",
+            "p{4.2cm}",
+            "p{6.3cm}",
+            "p{5.5cm}",
+            "@{}",
+        ]
+        column_spec = "".join(column_fragments)
+        controls_width = 6.3
+        residual_width = 5.5
+
+        table_lines = [
+            "\\clearpage",
+            "\\begingroup",
+            "\\setlength{\\paperwidth}{420mm}",
+            "\\setlength{\\paperheight}{297mm}",
+            "\\pdfpagewidth=420mm",
+            "\\pdfpageheight=297mm",
+            "\\special{papersize=420mm,297mm}",
+            "\\newgeometry{paperwidth=420mm,paperheight=297mm,left=15mm,right=15mm,top=20mm,bottom=20mm}",
+            "\\footnotesize",
+            "\\setlength\\tabcolsep{3pt}",
+            "\\renewcommand{\\arraystretch}{1.3}",
+            "\\setlength\\LTleft{0pt}",
+            "\\setlength\\LTright{0pt}",
+            f"\\begin{{longtable}}{{{column_spec}}}",
+        ]
+
+        header_cells = [
+            "\\textbf{Risk ID}",
+            "\\textbf{Hazardous Situation}",
+            "\\textbf{Harm}",
+            "\\textbf{Cause}",
+            "\\textbf{Risk (Severity $\\times$ Probability)}",
+            "\\textbf{Controls}",
+            "\\textbf{Residual Risk}",
+        ]
+        header_row = " & ".join(header_cells) + " \\\\ \\midrule"
+        table_lines.extend(
+            [
+                "\\toprule",
+                header_row,
+                "\\endfirsthead",
+                "\\toprule",
+                header_row,
+                "\\endhead",
+                "\\rowcolors{2}{gray!10}{white}",
+            ]
+        )
+
+        for index, risk in enumerate(risk_page.items):
+            severity = risk.attributes.get("severity", "")
+            probability = risk.attributes.get("probability", "")
+            residual_severity = risk.attributes.get("residual_severity", "")
+            residual_probability = risk.attributes.get("residual_probability", "")
+            label, score, colour = self._evaluate_risk_rating(severity, probability)
+            residual_label, residual_score, residual_colour = self._evaluate_risk_rating(
+                residual_severity, residual_probability
+            )
+            risk_level_cell = self._format_risk_rating_cell(label, score, colour)
+            residual_level_cell = self._format_risk_rating_cell(residual_label, residual_score, residual_colour)
+            residual_risk_text = risk.attributes.get("residual_risk", "")
+            controls_text = self.process_text(risk.attributes.get("controls", ""))
+
+            risk_expression = (
+                f"{self.process_text(severity)} $\\times$ {self.process_text(probability)} = {risk_level_cell}"
+            )
+
+            control_lines = [controls_text] if controls_text else ["-"]
+            controls_content = " \\\\ ".join(control_lines)
+            controls_section = f"\\parbox[t]{{{controls_width}cm}}{{{controls_content}}}"
+
+            residual_lines = [
+                f"{self.process_text(residual_severity)} $\\times$ {self.process_text(residual_probability)}"
+                f" = {residual_level_cell if residual_level_cell else '-'}"
+            ]
+            if residual_risk_text:
+                residual_lines.append(self.process_text(residual_risk_text))
+            residual_content = " \\\\ ".join([line for line in residual_lines if line] or ["-"])
+            residual_cell = f"\\parbox[t]{{{residual_width}cm}}{{{residual_content}}}"
+            title_text = self.process_text(risk.title)
+            id_text = self.process_text_impl(risk.risk_id, set())
+            first_cell = (
+                f"\\phantomsection\\label{{{risk.risk_id}}}"
+                f"\\hyperref[{risk.risk_id}]{{{id_text}: {title_text}}}"
+            )
+            row_cells = [
+                first_cell,
+                self.process_text(risk.attributes.get("hazardous_situation", "")),
+                self.process_text(risk.attributes.get("harm", "")),
+                self.process_text(risk.attributes.get("cause", "")),
+                risk_expression,
+                controls_section,
+                residual_cell,
+            ]
+            row_ending = " \\\\ \\midrule"
+            if index == len(risk_page.items) - 1:
+                row_ending = " \\\\"
+            table_lines.append(" & ".join(row_cells) + row_ending)
+
+        table_lines.extend(
+            [
+                "\\bottomrule",
+                "\\end{longtable}",
+                "\\restoregeometry",
+                "\\setlength{\\paperwidth}{210mm}",
+                "\\setlength{\\paperheight}{297mm}",
+                "\\pdfpagewidth=210mm",
+                "\\pdfpageheight=297mm",
+                "\\special{papersize=210mm,297mm}",
+                "\\endgroup",
+                "\\clearpage",
+            ]
+        )
+        return "\n".join(table_lines)
+
+    def render_risk_document(self, risk_page: RiskDocument) -> str:
+        label = self._build_label_from_text("risk", risk_page.title)
+        latex = "\\section{" + self.process_text(risk_page.title) + "}\\label{" + label + "}\n\n"
+        latex += self.md_to_latex(risk_page.generic_content)
+        latex += "\n\n"
+        latex += self.build_risk_register(risk_page)
+        return latex
+
     def md_to_latex(self, items: list[dict]) -> str:
 
         def handle_paragraph(item: dict) -> str:
@@ -210,6 +434,12 @@ class PdfReport():
             latex.append("\n\\end{itemize}")
             return "".join(latex)
 
+        def handle_inline_html(item: dict) -> str:
+            text = item.get("text", "").strip().lower()
+            if text in {"<br>", "<br/>", "<br />"}:
+                return "\\\\ "
+            return ""
+
         def handle_image(item: dict) -> str:
             url = item["src"]
             latex = [
@@ -239,6 +469,37 @@ class PdfReport():
             if code_type == "autoplaywright":
                 return handle_playwright_test(item)
             return handle_code(item)
+
+        def render_children(children: list[dict]) -> str:
+            fragments: list[str] = []
+            for child in children:
+                fragments.append(handle_item(child))
+            return "".join(fragments)
+
+        def handle_table(item: dict) -> str:
+            header_cells: list[str] = []
+            body_rows: list[list[str]] = []
+            for head_cell in item.get("children", [])[0]["children"]:
+                header_cells.append(render_children(head_cell.get("children", [])))
+            body_section = item.get("children", [])[1]
+            for row in body_section["children"]:
+                row_values = [render_children(cell.get("children", [])) for cell in row["children"]]
+                body_rows.append(row_values)
+
+            column_spec = "|".join(["X"] * max(len(header_cells), 1))
+            latex_lines = [
+                "\\begin{table}[h]",
+                "\\centering",
+                "\\rowcolors{2}{gray!10}{white}",
+                f"\\begin{{tabularx}}{{\\linewidth}}{{|{column_spec}|}}",
+                "\\hline",
+            ]
+            latex_lines.append(" & ".join(f"\\textbf{{{cell}}}" for cell in header_cells) + " \\\\ \\hline")
+            for row in body_rows:
+                latex_lines.append(" & ".join(row) + " \\\\ \\hline")
+            latex_lines.append("\\end{tabularx}")
+            latex_lines.append("\\end{table}")
+            return "\n".join(latex_lines)
 
         def handle_test_cover_page(_: dict) -> str:
             return r"""
@@ -381,9 +642,11 @@ class PdfReport():
                 "heading": handle_heading,
                 "list": handle_list,
                 "image": handle_image,
+                "table": handle_table,
                 "block_code": handle_block_code,
                 "blank_line": lambda _: "\n",
                 "newline": lambda _: "\n",
+                "inline_html": handle_inline_html,
                 "strong": lambda item: f"\\textbf{{{self.process_text(item['children'][0]['text'])}}}",
                 "emphasis": lambda item: f"\\emph{{{self.process_text(item['children'][0]['text'])}}}",
                 "softbreak": lambda _: "\n",
@@ -676,6 +939,9 @@ class PdfReport():
         for req_page in self.document.requirements:
             for requirement in req_page.items:
                 self.unique_ids.add(requirement.req_id)
+        for risk_page in self.document.risks:
+            for risk in risk_page.items:
+                self.unique_ids.add(risk.risk_id)
 
     @staticmethod
     def _logo_basename(path: Optional[str], default_name: str) -> str:
@@ -721,6 +987,15 @@ class PdfReport():
             os.mkdir("report")
 
         with isolated_filesystem("report"):
+
+            for design_doc in self.document.design_documents:
+                document += self.render_markdown_document(design_doc)
+
+            for supplementary_doc in self.document.supplementary_documents:
+                document += self.render_markdown_document(supplementary_doc)
+
+            for risk_page in self.document.risks:
+                document += self.render_risk_document(risk_page)
 
             for req_page in self.document.requirements:
                 document += "\\section{" + req_page.title + "}\\label{" + req_page.title + "}\n\n"

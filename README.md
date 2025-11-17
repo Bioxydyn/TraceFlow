@@ -9,6 +9,7 @@ By leveraging TraceFlow, you can:
 - Maintain your documentation in the same git repository as your code, ensuring version control and easy collaboration.
 - Automatically produce a "validation pack" containing all requirements, design, and test plans in PDF format.
 - Generate a traceability matrix linking all requirements to all tests.
+- Capture structured risk registers with requirement/test cross-links and colour-coded pre/post-mitigation risk levels.
 - Create fillable PDF forms for manual tests.
 - Run automated tests and capture their output as Markdown, then include them in the PDF report.
 - The result will look something [like this](example.pdf)
@@ -24,6 +25,9 @@ project/
   │   └── ...
   ├── design/
   │   ├── design.md
+  │   └── ...
+  ├── risks/
+  │   ├── risk-register.md
   │   └── ...
   └── tests/
       ├── test_plan.md
@@ -162,4 +166,34 @@ To address **REQ-003**, we will create a Python API for building and executing i
 - A set of Python classes to represent pipeline components
 - Functions to connect and execute pipeline components
 - Compliance checks to ensure the pipeline adheres to the required standards
+```
+
+### Risk Register Example
+TraceFlow now understands risk registers and renders them on A3 landscape pages with colour-coded severity, probability, and residual risk ratings.
+
+```
+# Risk Register
+
+## RISK-001: Incorrect study-patient association
+
+Hazardous Situation: Clinician views wrong patient's images believing they are correct
+Harm: Misdiagnosis, inappropriate treatment
+Cause: Race condition during HL7/DICOM message processing leading to incorrect PatientID or AccessionNumber assignment
+Severity: High
+Probability: Medium
+Controls: Unit/integration tests for identifier logic (REQ-005, TEST-002)
+Residual Severity: Medium
+Residual Probability: Low
+Residual Risk: Operator review plus automatic quarantine when mismatches occur
+```
+
+### Generic Document Example
+Any additional Markdown files (e.g., Installation/User Specifications) are included verbatim and can link to requirements, tests, or risks using their IDs:
+
+```
+# Installation & User Specification
+
+- Execute TEST-003 and record the release tag.
+- Confirm the identifier reconciliation feature (REQ-005) is active before go-live.
+- Review RISK-001 and RISK-002 residual risk statements with the clinical safety officer.
 ```
