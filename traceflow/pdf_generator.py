@@ -90,10 +90,10 @@ class PdfReport():
         "moderate": 3,
         "occasional": 3,
         "possible": 3,
-        "low": 2,
-        "minor": 2,
-        "remote": 2,
-        "unlikely": 2,
+        "low": 1,
+        "minor": 1,
+        "remote": 1,
+        "unlikely": 1,
         "very low": 1,
         "negligible": 1,
         "rare": 1,
@@ -266,20 +266,35 @@ class PdfReport():
         if not risk_page.items:
             return ""
 
+        column_fragments = [
+            "@{}p{4.0cm}",
+            "p{4.8cm}",
+            "p{4.0cm}",
+            "p{4.0cm}",
+            "p{4.0cm}",
+            "p{6.0cm}",
+            "p{4.5cm}",
+            "@{}",
+        ]
+        column_spec = "".join(column_fragments)
+        controls_width = 6.0
+        residual_width = 4.5
+
         table_lines = [
-            "\\newpage",
+            "\\clearpage",
+            "\\begingroup",
+            "\\setlength{\\paperwidth}{420mm}",
+            "\\setlength{\\paperheight}{297mm}",
+            "\\pdfpagewidth=420mm",
+            "\\pdfpageheight=297mm",
+            "\\special{papersize=420mm,297mm}",
             "\\newgeometry{paperwidth=420mm,paperheight=297mm,left=15mm,right=15mm,top=20mm,bottom=20mm}",
-            "\\begin{landscape}",
-            "\\rowcolors{2}{gray!10}{white}",
-            "\\begin{table}[h!]",
-            "\\scriptsize",
-            "\\setlength\\tabcolsep{4pt}",
+            "\\footnotesize",
+            "\\setlength\\tabcolsep{3pt}",
             "\\renewcommand{\\arraystretch}{1.3}",
-            (
-                "\\begin{tabularx}{\\linewidth}{@{}p{2.2cm}XXXp{1.8cm}p{1.8cm}p{2.3cm}"
-                "Xp{1.8cm}p{1.8cm}p{2.3cm}XX@{}}"
-            ),
-            "\\toprule",
+            "\\setlength\\LTleft{0pt}",
+            "\\setlength\\LTright{0pt}",
+            f"\\begin{{longtable}}{{{column_spec}}}",
         ]
 
         header_cells = [
@@ -287,64 +302,85 @@ class PdfReport():
             "\\textbf{Hazardous Situation}",
             "\\textbf{Harm}",
             "\\textbf{Cause}",
-            "\\textbf{Severity (S)}",
-            "\\textbf{Probability (P)}",
-            "\\textbf{Risk Level}",
-            "\\textbf{Risk Controls}",
-            "\\textbf{Residual S}",
-            "\\textbf{Residual P}",
+            "\\textbf{Risk}",
+            "\\textbf{Controls}",
             "\\textbf{Residual Risk}",
-            "\\textbf{Linked Requirements}",
-            "\\textbf{Linked Tests}",
         ]
-        table_lines.append(" & ".join(header_cells) + " \\\\ \\midrule")
+        header_row = " & ".join(header_cells) + " \\\\ \\midrule"
+        table_lines.extend(
+            [
+                "\\toprule",
+                header_row,
+                "\\endfirsthead",
+                "\\toprule",
+                header_row,
+                "\\endhead",
+                "\\rowcolors{2}{gray!10}{white}",
+            ]
+        )
 
-        for risk in risk_page.items:
+        for index, risk in enumerate(risk_page.items):
             severity = risk.attributes.get("severity", "")
             probability = risk.attributes.get("probability", "")
             residual_severity = risk.attributes.get("residual_severity", "")
             residual_probability = risk.attributes.get("residual_probability", "")
-            residual_risk_text = risk.attributes.get("residual_risk", "")
             label, score, colour = self._evaluate_risk_rating(severity, probability)
             residual_label, residual_score, residual_colour = self._evaluate_risk_rating(
                 residual_severity, residual_probability
             )
             risk_level_cell = self._format_risk_rating_cell(label, score, colour)
             residual_level_cell = self._format_risk_rating_cell(residual_label, residual_score, residual_colour)
-            residual_cell = residual_level_cell
+            residual_risk_text = risk.attributes.get("residual_risk", "")
+            controls_text = self.process_text(risk.attributes.get("controls", ""))
+
+            risk_expression = (
+                f"{self.process_text(severity)} $\\times$ {self.process_text(probability)} = {risk_level_cell}"
+            )
+
+            control_lines = [controls_text] if controls_text else ["-"]
+            controls_content = " \\\\ ".join(control_lines)
+            controls_section = f"\\parbox[t]{{{controls_width}cm}}{{{controls_content}}}"
+
+            residual_lines = [
+                f"{self.process_text(residual_severity)} $\\times$ {self.process_text(residual_probability)}"
+                f" = {residual_level_cell if residual_level_cell else '-'}"
+            ]
             if residual_risk_text:
-                residual_text = self.process_text(residual_risk_text)
-                if residual_cell:
-                    residual_cell = residual_cell + "\\\\ " + residual_text
-                else:
-                    residual_cell = residual_text
-            linked_requirements = ", ".join(risk.requirement_refs)
-            linked_tests = ", ".join(risk.test_refs)
+                residual_lines.append(self.process_text(residual_risk_text))
+            residual_content = " \\\\ ".join([line for line in residual_lines if line] or ["-"])
+            residual_cell = f"\\parbox[t]{{{residual_width}cm}}{{{residual_content}}}"
+            title_text = self.process_text(risk.title)
+            id_text = self.process_text_impl(risk.risk_id, set())
+            first_cell = (
+                f"\\phantomsection\\label{{{risk.risk_id}}}"
+                f"\\hyperref[{risk.risk_id}]{{{id_text}: {title_text}}}"
+            )
             row_cells = [
-                f"\\hyperref[{risk.risk_id}]{{{risk.risk_id}}}",
+                first_cell,
                 self.process_text(risk.attributes.get("hazardous_situation", "")),
                 self.process_text(risk.attributes.get("harm", "")),
                 self.process_text(risk.attributes.get("cause", "")),
-                self.process_text(severity),
-                self.process_text(probability),
-                risk_level_cell,
-                self.process_text(risk.attributes.get("controls", "")),
-                self.process_text(residual_severity),
-                self.process_text(residual_probability),
+                risk_expression,
+                controls_section,
                 residual_cell,
-                self.process_text(linked_requirements),
-                self.process_text(linked_tests),
             ]
-            table_lines.append(" & ".join(row_cells) + " \\\\")
+            row_ending = " \\\\ \\midrule"
+            if index == len(risk_page.items) - 1:
+                row_ending = " \\\\"
+            table_lines.append(" & ".join(row_cells) + row_ending)
 
         table_lines.extend(
             [
                 "\\bottomrule",
-                "\\end{tabularx}",
-                "\\end{table}",
-                "\\end{landscape}",
+                "\\end{longtable}",
                 "\\restoregeometry",
-                "\\newpage",
+                "\\setlength{\\paperwidth}{210mm}",
+                "\\setlength{\\paperheight}{297mm}",
+                "\\pdfpagewidth=210mm",
+                "\\pdfpageheight=297mm",
+                "\\special{papersize=210mm,297mm}",
+                "\\endgroup",
+                "\\clearpage",
             ]
         )
         return "\n".join(table_lines)
@@ -355,12 +391,6 @@ class PdfReport():
         latex += self.md_to_latex(risk_page.generic_content)
         latex += "\n\n"
         latex += self.build_risk_register(risk_page)
-        for risk in risk_page.items:
-            latex += "\\subsection{" + self.process_text(risk.risk_id + ": " + risk.title) + "}"
-            latex += "\\label{" + risk.risk_id + "}\n\n"
-            latex += self.md_to_latex(risk.content)
-            latex += "\n\n"
-        latex += "\\newpage\n\n"
         return latex
 
     def md_to_latex(self, items: list[dict]) -> str:
@@ -953,6 +983,15 @@ class PdfReport():
 
         with isolated_filesystem("report"):
 
+            for design_doc in self.document.design_documents:
+                document += self.render_markdown_document(design_doc)
+
+            for supplementary_doc in self.document.supplementary_documents:
+                document += self.render_markdown_document(supplementary_doc)
+
+            for risk_page in self.document.risks:
+                document += self.render_risk_document(risk_page)
+
             for req_page in self.document.requirements:
                 document += "\\section{" + req_page.title + "}\\label{" + req_page.title + "}\n\n"
                 document += self.md_to_latex(req_page.generic_content)
@@ -975,12 +1014,6 @@ class PdfReport():
 
                 document += "\\newpage\n\n"
 
-            for design_doc in self.document.design_documents:
-                document += self.render_markdown_document(design_doc)
-
-            for risk_page in self.document.risks:
-                document += self.render_risk_document(risk_page)
-
             for test_page in self.document.tests:
                 document += "\\section{" + test_page.title + "}\\label{" + test_page.title + "}\n\n"
                 document += self.md_to_latex(test_page.generic_content)
@@ -992,9 +1025,6 @@ class PdfReport():
                     document += "\n\n"
 
                 document += "\\newpage\n\n"
-
-            for supplementary_doc in self.document.supplementary_documents:
-                document += self.render_markdown_document(supplementary_doc)
 
             document += r"%%%%%%%%%%% END DOCUMENT" + "\n\n" r"\label{LastPage}" + "\n\n" + r"\end{document}" + "\n"
 
