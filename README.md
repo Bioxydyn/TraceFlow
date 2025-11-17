@@ -9,6 +9,7 @@ By leveraging TraceFlow, you can:
 - Maintain your documentation in the same git repository as your code, ensuring version control and easy collaboration.
 - Automatically produce a "validation pack" containing all requirements, design, and test plans in PDF format.
 - Generate a traceability matrix linking all requirements to all tests.
+- Capture structured risk registers with requirement/test cross-links and colour-coded pre/post-mitigation risk levels.
 - Create fillable PDF forms for manual tests.
 - Run automated tests and capture their output as Markdown, then include them in the PDF report.
 - The result will look something [like this](example.pdf)
@@ -24,6 +25,9 @@ project/
   │   └── ...
   ├── design/
   │   ├── design.md
+  │   └── ...
+  ├── risks/
+  │   ├── risk-register.md
   │   └── ...
   └── tests/
       ├── test_plan.md
