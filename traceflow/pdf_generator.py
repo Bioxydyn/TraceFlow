@@ -116,9 +116,14 @@ class PdfReport():
 
         # 2. For each word, check if it is a unique ID. unique_ids is a set, so this is O(1)
         for index, word in enumerate(words):
-            altered_word = word.replace(":", "")
-            if altered_word in unique_ids:
-                words[index] = f"\\hyperref[{altered_word}]{{{word}}}"
+            leading = len(word) - len(word.lstrip("()[]{}.,;:<>"))
+            trailing = len(word.rstrip("()[]{}.,;:<>"))
+            prefix = word[:leading]
+            suffix = word[trailing:]
+            core = word[leading:trailing] if trailing > leading else word[leading:]
+            altered_word = core.replace(":", "")
+            if altered_word in unique_ids and core:
+                words[index] = f"{prefix}\\hyperref[{altered_word}]{{{core}}}{suffix}"
 
         # 3. Rebuild the text
         new_text = " ".join(words)
@@ -268,17 +273,17 @@ class PdfReport():
 
         column_fragments = [
             "@{}p{4.0cm}",
-            "p{4.8cm}",
-            "p{4.0cm}",
-            "p{4.0cm}",
-            "p{4.0cm}",
-            "p{6.0cm}",
-            "p{4.5cm}",
+            "p{5.0cm}",
+            "p{4.2cm}",
+            "p{4.2cm}",
+            "p{4.2cm}",
+            "p{6.3cm}",
+            "p{5.5cm}",
             "@{}",
         ]
         column_spec = "".join(column_fragments)
-        controls_width = 6.0
-        residual_width = 4.5
+        controls_width = 6.3
+        residual_width = 5.5
 
         table_lines = [
             "\\clearpage",
@@ -302,7 +307,7 @@ class PdfReport():
             "\\textbf{Hazardous Situation}",
             "\\textbf{Harm}",
             "\\textbf{Cause}",
-            "\\textbf{Risk}",
+            "\\textbf{Risk (Severity $\\times$ Probability)}",
             "\\textbf{Controls}",
             "\\textbf{Residual Risk}",
         ]
