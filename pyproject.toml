@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "traceflow-rtm"
-version = "0.0.23"
+version = "0.0.25"
 description = "A Python library for managing software development documentation and testing that automates the generation of PDFs, validation packs, and traceability matrices."
 readme = "README.md"
 requires-python = ">=3.10"
