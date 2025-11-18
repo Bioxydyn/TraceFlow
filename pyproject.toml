@@ -7,7 +7,7 @@ name = "traceflow-rtm"
 version = "0.0.23"
 description = "A Python library for managing software development documentation and testing that automates the generation of PDFs, validation packs, and traceability matrices."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = "LicenseRef-Commercial"
 license-files = ["LICENCE"]
 authors = [
@@ -19,7 +19,7 @@ dependencies = [
     "latex==0.7.0",
     "mistune==2.0.5",
     "pyyaml==6.0.1",
-    "Pillow==10.0.1",
+    "Pillow==12.0.0",
     "cyclopts==3.24.0",
 ]
 
