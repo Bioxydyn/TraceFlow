@@ -94,6 +94,7 @@
 \pagestyle{plain}% Set page style to plain.
 \maketitle
 
+\BLOCK{ if include_cover_page }
 \begin{table}[h]
 \renewcommand{\arraystretch}{2} % Increases the height of each row
 \arrayrulecolor{gray} % Set the color of the horizontal and vertical lines to gray
@@ -154,6 +155,7 @@
 \noindent \rule{6cm}{0.4pt} \\
 \noindent Date
 \end{minipage}
+\BLOCK{ endif }
 
 
 \newpage

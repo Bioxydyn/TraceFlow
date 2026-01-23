@@ -7,7 +7,7 @@ from pkgutil import get_data
 import random
 import re
 import string
-from typing import Generator, Optional
+from typing import Generator, NamedTuple, Optional
 
 import latex.jinja2
 from PIL import Image, ImageDraw, ImageFont
@@ -49,6 +49,12 @@ _PLAYWRIGHT_LOG_CHAR_MAP: dict[str, str] = {
 PLAYWRIGHT_MAX_FRAMES = 9
 
 
+class IndividualReportSpec(NamedTuple):
+    suffix: str
+    title: str
+    flags: dict[str, bool]
+
+
 def load_resource(package: str, filename: str) -> bytes:
     data = get_data(package, filename)
     assert data is not None
@@ -72,7 +78,8 @@ def isolated_filesystem(temp_path: Optional[str] = None) -> Generator:
     finally:
         os.chdir(current_directory)
 
-        if not user_specified_path:
+        preserve_autotemp = os.getenv("TRACEFLOW_KEEP_TEMPS", "1") != "0"
+        if not user_specified_path and not preserve_autotemp:
             shutil.rmtree(temp_path)
 
 
@@ -189,7 +196,7 @@ class PdfReport():
             return f"\\cellcolor{{{colour}}}{cell_text}"
         return cell_text
 
-    def build_traceability_matrix(self, req_page: RequirementDocument) -> str:
+    def build_traceability_matrix(self, req_page: RequirementDocument, *, link_tests: bool = True) -> str:
         # Display the traceability matrix
         table = "\\subsection{Traceability Matrix}\n\n"
 
@@ -228,7 +235,8 @@ class PdfReport():
             # Header row with test ids
             header = "\\diagbox{\\textbf{\\textit{Req ID}}}{\\textbf{\\textit{Test ID}}}"
             for test_id in chunk:
-                header += " & \\rot{\\hyperref[" + test_id + "]{" + test_id + "}}"
+                linked_test = "\\hyperref[" + test_id + "]{" + test_id + "}" if link_tests else test_id
+                header += f" & \\rot{{{linked_test}}}"
             header += " \\\\\n\\hline\n"
             table += header
 
@@ -240,7 +248,10 @@ class PdfReport():
                 row += "\\hyperref[" + r.req_id + "]{" + r.req_id + "}"
                 for test_id in chunk:
                     if test_id in r.test_ids:
-                        row += " & \\hyperref[" + test_id + "]{" + "$\\checkmark$}"
+                        checkmark = "$\\checkmark$"
+                        if link_tests:
+                            checkmark = "\\hyperref[" + test_id + "]{" + checkmark + "}"
+                        row += f" & {checkmark}"
                     else:
                         row += " & "
                 row += " \\\\\n\\hline\n"
@@ -443,7 +454,7 @@ class PdfReport():
         def handle_image(item: dict) -> str:
             url = item["src"]
             latex = [
-                '\n\\begin{figure}[h]',
+                '\n\\begin{figure}[H]',
                 '\n\\centering',
                 f'\n\\includegraphics[width=0.5\\textwidth]{{{url}}}',
                 f'\n\\caption{{{self.process_text(item["alt"])}}}',
@@ -624,14 +635,23 @@ class PdfReport():
 
             subprocess.run(["mmdc", "-i", mmd_path, "-o", svg_path], check=True)  # noqa S607, S603
 
-            if cairosvg is None:
-                raise RuntimeError(
-                    "Rendering mermaid diagrams requires cairosvg, but importing it failed"
-                    f" with: {_CAIROSVG_IMPORT_ERROR}"
-                )
-            # Convert the SVG to PDF
             pdf_path = svg_path.replace(".svg", ".pdf")
-            cairosvg.svg2pdf(url=svg_path, write_to=pdf_path)
+
+            pdf_rendered = False
+            try:
+                # Direct PDF export via mermaid-cli keeps text/layout fidelity.
+                subprocess.run(["mmdc", "-i", mmd_path, "-o", pdf_path, "-f"], check=True)  # noqa S607, S603
+                pdf_rendered = True
+            except subprocess.CalledProcessError:
+                pdf_rendered = False
+
+            if not pdf_rendered:
+                if cairosvg is None:
+                    raise RuntimeError(
+                        "Rendering mermaid diagrams requires cairosvg, but importing it failed"
+                        f" with: {_CAIROSVG_IMPORT_ERROR}"
+                    )
+                cairosvg.svg2pdf(url=svg_path, write_to=pdf_path)
             return handle_image({"src": pdf_path, "alt": "", "title": "", "type": "image"})
 
         def handle_item(item: dict) -> str:
@@ -912,6 +932,28 @@ class PdfReport():
             return "test" + suffix
         return "".join(random.choices(string.ascii_uppercase, k=10)) + suffix # noqa S311
 
+    def _collect_unique_ids(
+        self,
+        *,
+        include_risks: bool = True,
+        include_requirements: bool = True,
+        include_tests: bool = True,
+    ) -> set[str]:
+        unique_ids: set[str] = set()
+        if include_tests:
+            for test_page in self.document.tests:
+                for test in test_page.items:
+                    unique_ids.add(test.test_id)
+        if include_requirements:
+            for req_page in self.document.requirements:
+                for requirement in req_page.items:
+                    unique_ids.add(requirement.req_id)
+        if include_risks:
+            for risk_page in self.document.risks:
+                for risk in risk_page.items:
+                    unique_ids.add(risk.risk_id)
+        return unique_ids
+
     def __init__(
         self,
         document: Document,
@@ -930,18 +972,7 @@ class PdfReport():
             if not os.path.isdir(resolved_playwright_dir):
                 raise FileNotFoundError(f"Playwright directory does not exist: {resolved_playwright_dir}")
             self.playwright_dir = resolved_playwright_dir
-
-        # Build a set containing all the test and requiremnt IDs
-        self.unique_ids = set()
-        for test_page in self.document.tests:
-            for test in test_page.items:
-                self.unique_ids.add(test.test_id)
-        for req_page in self.document.requirements:
-            for requirement in req_page.items:
-                self.unique_ids.add(requirement.req_id)
-        for risk_page in self.document.risks:
-            for risk in risk_page.items:
-                self.unique_ids.add(risk.risk_id)
+        self.unique_ids = self._collect_unique_ids()
 
     @staticmethod
     def _logo_basename(path: Optional[str], default_name: str) -> str:
@@ -965,123 +996,233 @@ class PdfReport():
             with open(destination, "wb") as f:
                 f.write(load_resource("traceflow.res", resource_name))
 
-    def render(self) -> bytes:
-
-        header = _latex_jinja2_env.from_string(
-            load_resource("traceflow.res", "report-header.tex").decode("utf-8")
+    def render(
+        self,
+        *,
+        include_design: bool = True,
+        include_supplementary: bool = True,
+        include_risks: bool = True,
+        include_requirements: bool = True,
+        include_tests: bool = True,
+        report_title: Optional[str] = None,
+        include_cover_page: bool = True,
+    ) -> bytes:
+        original_unique_ids = self.unique_ids
+        selected_unique_ids = self._collect_unique_ids(
+            include_risks=include_risks,
+            include_requirements=include_requirements,
+            include_tests=include_tests,
         )
-
-        tex_vars = self.get_global_tex_vars()
-        tex_vars["report_title"] = self.process_text(
-            self.document.name + " " + self.document.version + ": Validation Pack"
-        )
-        top_left_logo_name = PdfReport._logo_basename(self.top_left_logo_path, "traceflow-logo.png")
-        top_right_logo_name = PdfReport._logo_basename(self.top_right_logo_path, "voxelflow-logo.png")
-
-        tex_vars["top_left_logo"] = top_left_logo_name
-        tex_vars["top_right_logo"] = top_right_logo_name
-        document = header.render(**tex_vars)
-
-        # Create the "report" directory if it doesn't exist
-        if not os.path.exists("report"):
-            os.mkdir("report")
-
-        with isolated_filesystem("report"):
-
-            for design_doc in self.document.design_documents:
-                document += self.render_markdown_document(design_doc)
-
-            for supplementary_doc in self.document.supplementary_documents:
-                document += self.render_markdown_document(supplementary_doc)
-
-            for risk_page in self.document.risks:
-                document += self.render_risk_document(risk_page)
-
-            for req_page in self.document.requirements:
-                document += "\\section{" + req_page.title + "}\\label{" + req_page.title + "}\n\n"
-                document += self.md_to_latex(req_page.generic_content)
-
-                document += self.build_traceability_matrix(req_page)
-
-                for requirement in req_page.items:
-                    document += "\\subsection{" + self.process_text(requirement.req_id + ": " + requirement.title) + "}"
-                    document += "\\label{" + requirement.req_id + "}\n\n"
-
-                    linked_test_content: str = ""
-                    for test_id_linked in requirement.test_ids:
-                        linked_test_content += "**Test ID:** " + test_id_linked + "\n"
-                    if linked_test_content != "":
-                        document += self.md_to_latex(parse_markdown(linked_test_content))
-                        document += "\n\n"
-
-                    document += self.md_to_latex(requirement.content)
-                    document += "\n\n"
-
-                document += "\\newpage\n\n"
-
-            for test_page in self.document.tests:
-                document += "\\section{" + test_page.title + "}\\label{" + test_page.title + "}\n\n"
-                document += self.md_to_latex(test_page.generic_content)
-
-                for test in test_page.items:
-                    document += "\\subsection{" + self.process_text(test.test_id + ": " + test.title) + "}"
-                    document += "\\label{" + test.test_id + "}\n\n"
-                    document += self.md_to_latex(test.content)
-                    document += "\n\n"
-
-                document += "\\newpage\n\n"
-
-            document += r"%%%%%%%%%%% END DOCUMENT" + "\n\n" r"\label{LastPage}" + "\n\n" + r"\end{document}" + "\n"
-
-            self._ensure_logo(
-                filename=top_left_logo_name,
-                resource_name="traceflow-logo.png",
-                provided_path=self.top_left_logo_path,
-            )
-            self._ensure_logo(
-                filename=top_right_logo_name,
-                resource_name="voxelflow-logo.png",
-                provided_path=self.top_right_logo_path,
+        self.unique_ids = selected_unique_ids
+        try:
+            header = _latex_jinja2_env.from_string(
+                load_resource("traceflow.res", "report-header.tex").decode("utf-8")
             )
 
-            # Recursively copy all files from the document.input_dir folder to the current folder
-            for root, _, files in os.walk(self.document.input_dir):
-                for filename in files:
-                    shutil.copy(os.path.join(root, filename), filename)
+            tex_vars = self.get_global_tex_vars()
+            default_title = self.document.name + " " + self.document.version + ": Validation Pack"
+            tex_vars["report_title"] = self.process_text(report_title or default_title)
+            tex_vars["include_cover_page"] = include_cover_page
+            top_left_logo_name = PdfReport._logo_basename(self.top_left_logo_path, "traceflow-logo.png")
+            top_right_logo_name = PdfReport._logo_basename(self.top_right_logo_path, "voxelflow-logo.png")
 
-            output_filename = self.get_temporary_filename(suffix=".tex")
+            tex_vars["top_left_logo"] = top_left_logo_name
+            tex_vars["top_right_logo"] = top_right_logo_name
+            document = header.render(**tex_vars)
 
-            with open(output_filename, "w") as output_file:
-                output_file.write(document)
+            # Create the "report" directory if it doesn't exist
+            if not os.path.exists("report"):
+                os.mkdir("report")
 
-            pdflatex_command = f"pdflatex -interaction=nonstopmode -halt-on-error {output_filename}"
-            try:
-                subprocess.check_output(
-                    pdflatex_command,
-                    shell=True,  # noqa: S602
-                    stderr=subprocess.STDOUT,
-                    universal_newlines=True,
-                    errors="replace",
-                )  # nopep8
-                subprocess.check_output(
-                    pdflatex_command,
-                    shell=True,  # noqa: S602
-                    stderr=subprocess.STDOUT,
-                    universal_newlines=True,
-                    errors="replace",
-                )  # nopep8
-                subprocess.check_output(
-                    pdflatex_command,
-                    shell=True,  # noqa: S602
-                    stderr=subprocess.STDOUT,
-                    universal_newlines=True,
-                    errors="replace",
-                )  # nopep8
-            except subprocess.CalledProcessError as exc:
-                print("Status : FAIL", exc.returncode, exc.output)
-                raise exc
+            with isolated_filesystem("report"):
 
-            output_pdf = os.path.splitext(output_filename)[0] + ".pdf"
+                if include_design:
+                    for design_doc in self.document.design_documents:
+                        document += self.render_markdown_document(design_doc)
 
-            with open(output_pdf, "rb") as out:
-                return out.read()
+                if include_supplementary:
+                    for supplementary_doc in self.document.supplementary_documents:
+                        document += self.render_markdown_document(supplementary_doc)
+
+                if include_risks:
+                    for risk_page in self.document.risks:
+                        document += self.render_risk_document(risk_page)
+
+                if include_requirements:
+                    for req_page in self.document.requirements:
+                        document += "\\section{" + req_page.title + "}\\label{" + req_page.title + "}\n\n"
+                        document += self.md_to_latex(req_page.generic_content)
+
+                        document += self.build_traceability_matrix(req_page, link_tests=include_tests)
+
+                        for requirement in req_page.items:
+                            document += "\\subsection{" + self.process_text(requirement.req_id + ": " + requirement.title) + "}"
+                            document += "\\label{" + requirement.req_id + "}\n\n"
+
+                            linked_test_content: str = ""
+                            for test_id_linked in requirement.test_ids:
+                                linked_test_content += "**Test ID:** " + test_id_linked + "\n"
+                            if linked_test_content != "":
+                                document += self.md_to_latex(parse_markdown(linked_test_content))
+                                document += "\n\n"
+
+                            document += self.md_to_latex(requirement.content)
+                            document += "\n\n"
+
+                        document += "\\newpage\n\n"
+
+                if include_tests:
+                    for test_page in self.document.tests:
+                        document += "\\section{" + test_page.title + "}\\label{" + test_page.title + "}\n\n"
+                        document += self.md_to_latex(test_page.generic_content)
+
+                        for test in test_page.items:
+                            document += "\\subsection{" + self.process_text(test.test_id + ": " + test.title) + "}"
+                            document += "\\label{" + test.test_id + "}\n\n"
+                            document += self.md_to_latex(test.content)
+                            document += "\n\n"
+
+                        document += "\\newpage\n\n"
+
+                document += r"%%%%%%%%%%% END DOCUMENT" + "\n\n" r"\label{LastPage}" + "\n\n" + r"\end{document}" + "\n"
+
+                self._ensure_logo(
+                    filename=top_left_logo_name,
+                    resource_name="traceflow-logo.png",
+                    provided_path=self.top_left_logo_path,
+                )
+                self._ensure_logo(
+                    filename=top_right_logo_name,
+                    resource_name="voxelflow-logo.png",
+                    provided_path=self.top_right_logo_path,
+                )
+
+                # Recursively copy all files from the document.input_dir folder to the current folder
+                for root, _, files in os.walk(self.document.input_dir):
+                    for filename in files:
+                        shutil.copy(os.path.join(root, filename), filename)
+
+                output_filename = self.get_temporary_filename(suffix=".tex")
+
+                with open(output_filename, "w") as output_file:
+                    output_file.write(document)
+
+                pdflatex_command = f"pdflatex -interaction=nonstopmode -halt-on-error {output_filename}"
+                try:
+                    subprocess.check_output(
+                        pdflatex_command,
+                        shell=True,  # noqa: S602
+                        stderr=subprocess.STDOUT,
+                        universal_newlines=True,
+                        errors="replace",
+                    )  # nopep8
+                    subprocess.check_output(
+                        pdflatex_command,
+                        shell=True,  # noqa: S602
+                        stderr=subprocess.STDOUT,
+                        universal_newlines=True,
+                        errors="replace",
+                    )  # nopep8
+                    subprocess.check_output(
+                        pdflatex_command,
+                        shell=True,  # noqa: S602
+                        stderr=subprocess.STDOUT,
+                        universal_newlines=True,
+                        errors="replace",
+                    )  # nopep8
+                except subprocess.CalledProcessError as exc:
+                    print("Status : FAIL", exc.returncode, exc.output)
+                    raise exc
+
+                output_pdf = os.path.splitext(output_filename)[0] + ".pdf"
+
+                with open(output_pdf, "rb") as out:
+                    return out.read()
+        finally:
+            self.unique_ids = original_unique_ids
+
+    def _individual_report_specs(self) -> list[IndividualReportSpec]:
+        specs: list[IndividualReportSpec] = []
+        if self.document.design_documents:
+            specs.append(
+                IndividualReportSpec(
+                    suffix="design",
+                    title="Design Documentation",
+                    flags={
+                        "include_design": True,
+                        "include_supplementary": False,
+                        "include_risks": False,
+                        "include_requirements": False,
+                        "include_tests": False,
+                    },
+                )
+            )
+        if self.document.supplementary_documents:
+            specs.append(
+                IndividualReportSpec(
+                    suffix="docs",
+                    title="Supporting Documentation",
+                    flags={
+                        "include_design": False,
+                        "include_supplementary": True,
+                        "include_risks": False,
+                        "include_requirements": False,
+                        "include_tests": False,
+                    },
+                )
+            )
+        if any(risk_doc.items for risk_doc in self.document.risks):
+            specs.append(
+                IndividualReportSpec(
+                    suffix="risks",
+                    title="Risk Register",
+                    flags={
+                        "include_design": False,
+                        "include_supplementary": False,
+                        "include_risks": True,
+                        "include_requirements": False,
+                        "include_tests": False,
+                    },
+                )
+            )
+        if any(req_doc.items for req_doc in self.document.requirements):
+            specs.append(
+                IndividualReportSpec(
+                    suffix="requirements",
+                    title="Requirements",
+                    flags={
+                        "include_design": False,
+                        "include_supplementary": False,
+                        "include_risks": False,
+                        "include_requirements": True,
+                        "include_tests": False,
+                    },
+                )
+            )
+        if any(test_doc.items for test_doc in self.document.tests):
+            specs.append(
+                IndividualReportSpec(
+                    suffix="tests",
+                    title="Test Plan",
+                    flags={
+                        "include_design": False,
+                        "include_supplementary": False,
+                        "include_risks": False,
+                        "include_requirements": False,
+                        "include_tests": True,
+                    },
+                )
+            )
+        return specs
+
+    def render_individual_pdfs(self, base_output_path: str, *, extension: str = ".pdf") -> list[str]:
+        output_ext = extension or ".pdf"
+        output_files: list[str] = []
+        for spec in self._individual_report_specs():
+            output_path = f"{base_output_path}-{spec.suffix}{output_ext}"
+            title = f"{self.document.name} {self.document.version}: {spec.title}"
+            pdf_bytes = self.render(report_title=title, include_cover_page=False, **spec.flags)
+            with open(output_path, "wb") as f:
+                f.write(pdf_bytes)
+            output_files.append(output_path)
+        return output_files

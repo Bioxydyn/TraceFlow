@@ -1,3 +1,4 @@
+import os
 from typing import Annotated, Optional
 
 from cyclopts import App, Parameter
@@ -35,6 +36,13 @@ def _run(
             help="Path to the top-right logo (footer).",
         ),
     ] = None,
+    individual_pdfs: Annotated[
+        bool,
+        Parameter(
+            name="--individual-pdfs",
+            help="Also emit per-section PDFs alongside the combined validation pack.",
+        ),
+    ] = False,
 ) -> int:
     document: Document = process_directory(directory, version=version)
     report: PdfReport = PdfReport(
@@ -46,6 +54,11 @@ def _run(
     output_file: bytes = report.render()
     with open(output, "wb") as f:
         f.write(output_file)
+
+    if individual_pdfs:
+        base_output, extension = os.path.splitext(output)
+        for filename in report.render_individual_pdfs(base_output, extension=extension or ".pdf"):
+            print(f"Wrote individual PDF: {filename}")
     return 0
 
 

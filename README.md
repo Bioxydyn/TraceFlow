@@ -58,6 +58,12 @@ If you do not pass these options, TraceFlow falls back to the packaged images in
 
 This command will generate a PDF for all of your documentation and test cases, as well as a validation pack and traceability matrix.
 
+Append `--individual-pdfs` to also emit per-section PDFs alongside the combined validation pack. For example, running
+`traceflow traceflow 1.0.0 1corelab-validation-pack.pdf --individual-pdfs` will produce the main PDF plus files like
+`1corelab-validation-pack-design.pdf`, `1corelab-validation-pack-docs.pdf`, `1corelab-validation-pack-risks.pdf`,
+`1corelab-validation-pack-requirements.pdf`, and `1corelab-validation-pack-tests.pdf` when those sections exist in your
+source documents.
+
 ### Running the Playwright example
 
 TraceFlow includes the `examples` directory, which demonstrates `autoplaywright` tests that invoke the Playwright scripts in this repo. To reproduce that example, run:
