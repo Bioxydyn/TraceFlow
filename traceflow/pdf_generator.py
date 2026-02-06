@@ -288,7 +288,11 @@ class PdfReport():
             "\\pdfpagewidth=420mm",
             "\\pdfpageheight=297mm",
             "\\special{papersize=420mm,297mm}",
-            "\\newgeometry{paperwidth=420mm,paperheight=297mm,left=15mm,right=15mm,top=20mm,bottom=20mm}",
+            "\\newgeometry{left=15mm,right=15mm,top=20mm,bottom=20mm}",
+            "\\setlength{\\textwidth}{390mm}",
+            "\\setlength{\\columnwidth}{\\textwidth}",
+            "\\setlength{\\linewidth}{\\textwidth}",
+            "\\setlength{\\hsize}{\\textwidth}",
             "\\setlength{\\headwidth}{\\textwidth}",
             "\\fancyhead[L]{\\includegraphics[width=\\traceflowwidelogowidth,keepaspectratio]{\\traceflowtopleftlogo}}",
             "\\fancyhead[R]{\\includegraphics[width=\\traceflowwidelogowidth,keepaspectratio]{\\traceflowtoprightlogo}}",
@@ -427,10 +431,7 @@ class PdfReport():
                     if child["type"] == "text":
                         latex.append(self.process_text(child["text"]))
                     if child["type"] == "block_text":
-                        try:
-                            latex.append(self.md_to_latex(child["children"]))
-                        except IndexError:
-                            print("Warning, empty block text:", child)
+                        latex.append(render_children(child.get("children", [])))
 
             latex.append("\n\\end{itemize}")
             return "".join(latex)
@@ -457,7 +458,8 @@ class PdfReport():
         def handle_block_code(item: dict) -> str:
             code_type = None
             if "info" in item:
-                code_type = item["info"]
+                raw_info = str(item["info"]).strip()
+                code_type = raw_info.split()[0] if raw_info else None
 
             if code_type == "mermaid":
                 return handle_mermaid(item)
@@ -467,6 +469,8 @@ class PdfReport():
                 return handle_manual_test(item)
             if code_type == "testcoverpage":
                 return handle_test_cover_page(item)
+            if code_type == "autotest":
+                return handle_auto_test(item)
             return handle_code(item)
 
         def render_children(children: list[dict]) -> str:
@@ -540,10 +544,23 @@ class PdfReport():
 \end{Form}
         """  # noqa E501
 
+        def handle_auto_test(item: dict) -> str:
+            content = item.get("text", "")
+            lines = [line.strip() for line in content.splitlines() if line.strip()]
+            if not lines:
+                raise ValueError("autotest blocks must include a test ID.")
+            if len(lines) > 1:
+                raise ValueError("autotest blocks support exactly one test ID.")
+            return self._render_autotest_result(lines[0])
+
         def handle_code(item: dict) -> str:
-            language = None
+            language: Optional[str] = None
             if "info" in item:
-                language = item["info"]
+                raw_info = str(item["info"]).strip()
+                language_token = raw_info.split()[0] if raw_info else ""
+                if language_token and re.fullmatch(r"[A-Za-z0-9_+#-]+", language_token):
+                    if language_token.lower() not in {"text", "plaintext", "txt", "plain"}:
+                        language = language_token
             code_content = item["text"]
 
             if language:
@@ -605,6 +622,7 @@ class PdfReport():
                 "emphasis": lambda item: f"\\emph{{{self.process_text(item['children'][0]['text'])}}}",
                 "softbreak": lambda _: "\n",
                 "codespan": lambda item: f"\\texttt{{{self.process_text(item['text'])}}}",
+                "raw_latex": lambda item: item.get("text", ""),
                 "linebreak": lambda _: "\n",
             }
             handler = handlers.get(item["type"])
@@ -700,6 +718,134 @@ class PdfReport():
         return "\n".join(fragment for fragment in fragments if fragment)
 
     @staticmethod
+    def _sanitize_path_component(value: str) -> str:
+        sanitized = re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip())
+        return sanitized or "autotest"
+
+    @staticmethod
+    def _is_external_reference(path: str) -> bool:
+        lower = path.lower()
+        return lower.startswith("http://") or lower.startswith("https://") or lower.startswith("/")
+
+    @staticmethod
+    def _iter_ast_nodes(item: dict) -> Generator[dict, None, None]:
+        yield item
+        for child in item.get("children", []):
+            yield from PdfReport._iter_ast_nodes(child)
+
+    @staticmethod
+    def _prefix_image_sources(items: list[dict], prefix: str) -> list[dict]:
+        for item in items:
+            for node in PdfReport._iter_ast_nodes(item):
+                if node.get("type") != "image":
+                    continue
+                src = node.get("src", "")
+                if not src or PdfReport._is_external_reference(src):
+                    continue
+                normalised = src.replace("\\", "/").lstrip("./")
+                node["src"] = f"{prefix}/{normalised}"
+        return items
+
+    @staticmethod
+    def _normalise_autotest_headings(items: list[dict]) -> list[dict]:
+        for item in items:
+            if item.get("type") == "heading":
+                level = int(item.get("level", 1))
+                item["level"] = min(3, max(1, level + 2))
+        return items
+
+    @staticmethod
+    def _normalise_status_label(value: str) -> str:
+        cleaned = re.sub(r"[_-]+", " ", value.strip())
+        if not cleaned:
+            return ""
+        return " ".join(part.capitalize() for part in cleaned.split())
+
+    @staticmethod
+    def _status_colour(value: str) -> str:
+        status = value.strip().lower()
+        if status in {"passed", "pass", "success", "succeeded"}:
+            return "green!50!black"
+        if status in {"failed", "fail", "error"}:
+            return "red!70!black"
+        if status in {"skipped", "skip"}:
+            return "gray!70!black"
+        if status in {"running", "in progress"}:
+            return "blue!65!black"
+        if status in {"cancelled", "canceled", "warning"}:
+            return "orange!80!black"
+        return "black"
+
+    @classmethod
+    def _style_autotest_statuses(cls: type['PdfReport'], items: list[dict]) -> list[dict]:
+        for item in items:
+            for node in cls._iter_ast_nodes(item):
+                if node.get("type") != "list_item":
+                    continue
+                list_children = node.get("children", [])
+                if len(list_children) != 1 or list_children[0].get("type") != "block_text":
+                    continue
+                inline_children = list_children[0].get("children", [])
+                if len(inline_children) < 2:
+                    continue
+
+                label_node = inline_children[0]
+                value_node = inline_children[1]
+                if label_node.get("type") != "text" or value_node.get("type") != "codespan":
+                    continue
+                if label_node.get("text", "").strip().lower() != "status:":
+                    continue
+
+                raw_status = str(value_node.get("text", "")).strip()
+                status_label = cls._normalise_status_label(raw_status)
+                if not status_label:
+                    continue
+                colour = cls._status_colour(raw_status)
+
+                inline_children[0]["text"] = "Status: "
+                inline_children[1] = {
+                    "type": "raw_latex",
+                    "text": f"\\textbf{{\\textcolor{{{colour}}}{{{status_label}}}}}",
+                }
+        return items
+
+    def _resolve_autotest_result_file(self, test_id: str) -> tuple[str, str]:
+        if not self.test_results_dir:
+            raise RuntimeError(
+                "autotest blocks require --test-results-dir to be set."
+            )
+        source_dir = os.path.join(self.test_results_dir, test_id)
+        if not os.path.isdir(source_dir):
+            raise FileNotFoundError(
+                f"Autotest ID `{test_id}` not found in test results directory: {self.test_results_dir}"
+            )
+        result_file = os.path.join(source_dir, "result.md")
+        if not os.path.isfile(result_file):
+            raise FileNotFoundError(
+                f"Autotest result markdown missing for `{test_id}`: {result_file}"
+            )
+        return source_dir, result_file
+
+    def _render_autotest_result(self, test_id: str) -> str:
+        source_dir, result_file = self._resolve_autotest_result_file(test_id)
+        staged_root = "autotest-results"
+        os.makedirs(staged_root, exist_ok=True)
+        staged_name = self._sanitize_path_component(test_id)
+        staged_dir = os.path.join(staged_root, staged_name)
+        if os.path.isdir(staged_dir):
+            shutil.rmtree(staged_dir)
+        shutil.copytree(source_dir, staged_dir)
+
+        with open(result_file, "r", encoding="utf-8") as result_handle:
+            result_markdown = result_handle.read()
+
+        parsed_result = parse_markdown(result_markdown)
+        parsed_result = self._normalise_autotest_headings(parsed_result)
+        parsed_result = self._style_autotest_statuses(parsed_result)
+        parsed_result = self._prefix_image_sources(parsed_result, f"{staged_root}/{staged_name}")
+        return self.md_to_latex(parsed_result)
+
+    @staticmethod
     def get_global_tex_vars() -> dict[str, str]:
         return {"version": __version__}
 
@@ -735,12 +881,19 @@ class PdfReport():
         self,
         document: Document,
         *,
+        test_results_dir: Optional[str] = None,
         top_left_logo_path: Optional[str] = None,
         top_right_logo_path: Optional[str] = None,
     ):
         self.document = document
         self.top_left_logo_path = top_left_logo_path
         self.top_right_logo_path = top_right_logo_path
+        self.test_results_dir: Optional[str] = None
+        if test_results_dir:
+            resolved_test_results_dir = os.path.abspath(test_results_dir)
+            if not os.path.isdir(resolved_test_results_dir):
+                raise FileNotFoundError(f"Test results directory does not exist: {resolved_test_results_dir}")
+            self.test_results_dir = resolved_test_results_dir
         self.unique_ids = self._collect_unique_ids()
 
     @staticmethod
@@ -819,12 +972,14 @@ class PdfReport():
 
                 if include_requirements:
                     for req_page in self.document.requirements:
-                        document += "\\section{" + req_page.title + "}\\label{" + req_page.title + "}\n\n"
+                        section_label = self._build_label_from_text("requirements", req_page.title)
+                        document += "\\section{" + self.process_text(req_page.title) + "}\\label{" + section_label + "}\n\n"
                         document += self.md_to_latex(req_page.generic_content)
 
                         document += self.build_traceability_matrix(req_page, link_tests=include_tests)
 
-                        for requirement in req_page.items:
+                        separator = "\\vspace{0.15cm}\n\\noindent\\rule{\\linewidth}{0.4pt}\n\\vspace{0.15cm}\n\n"
+                        for requirement_index, requirement in enumerate(req_page.items):
                             document += "\\subsection{" + self.process_text(requirement.req_id + ": " + requirement.title) + "}"
                             document += "\\label{" + requirement.req_id + "}\n\n"
 
@@ -837,19 +992,25 @@ class PdfReport():
 
                             document += self.md_to_latex(requirement.content)
                             document += "\n\n"
+                            if requirement_index < len(req_page.items) - 1:
+                                document += separator
 
                         document += "\\newpage\n\n"
 
                 if include_tests:
                     for test_page in self.document.tests:
-                        document += "\\section{" + test_page.title + "}\\label{" + test_page.title + "}\n\n"
+                        section_label = self._build_label_from_text("tests", test_page.title)
+                        document += "\\section{" + self.process_text(test_page.title) + "}\\label{" + section_label + "}\n\n"
                         document += self.md_to_latex(test_page.generic_content)
 
-                        for test in test_page.items:
+                        separator = "\\vspace{0.15cm}\n\\noindent\\rule{\\linewidth}{0.4pt}\n\\vspace{0.15cm}\n\n"
+                        for test_index, test in enumerate(test_page.items):
                             document += "\\subsection{" + self.process_text(test.test_id + ": " + test.title) + "}"
                             document += "\\label{" + test.test_id + "}\n\n"
                             document += self.render_test_content(test.content)
                             document += "\n\n"
+                            if test_index < len(test_page.items) - 1:
+                                document += separator
 
                         document += "\\newpage\n\n"
 

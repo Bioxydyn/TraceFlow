@@ -65,13 +65,38 @@ source documents.
 
 ### Running the example
 
-TraceFlow includes the `examples` directory with requirements, design, risks, and manual tests. To reproduce that example, run:
+TraceFlow includes the `examples` directory with requirements, design, risks, and tests. To reproduce that example, run:
 
 ```
-uv run traceflow examples 1.0.0 test.pdf
+uv run traceflow examples 1.0.0 test.pdf --test-results-dir example-test-results
 ```
 
 On macOS you may need to prefix the command with `DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib` so the bundled `cairosvg` finds `libcairo`. This example writes `test.pdf` into the current directory and stores temporary LaTeX artifacts in `report/`.
+
+### Using `autotest` blocks
+
+You can embed test evidence captured outside TraceFlow by pointing to a test-results folder:
+
+- Pass `--test-results-dir PATH` when running TraceFlow.
+- In your markdown test plan, use:
+
+```autotest
+TEST-ID
+```
+
+TraceFlow resolves `TEST-ID` to `PATH/TEST-ID/result.md` and renders that markdown content into the PDF.
+If `PATH/TEST-ID` or `result.md` is missing, TraceFlow raises an error.
+
+Expected folder structure:
+
+```
+test-results/
+  TEST-ID/
+    result.md
+    screenshots/
+      screenshot-001.png
+      ...
+```
 
 ### Requirements
 ```
@@ -139,9 +164,15 @@ C --> D[Classification]
 
 The user is logged in and redirected to the main dashboard.
 
-### Test Result (Manual):
+### Test Result (Manual Sign-off):
 
 \```manualtest
+\```
+
+### Test Result (Automatic Evidence):
+
+\```autotest
+TEST-002
 \```
 ```
 

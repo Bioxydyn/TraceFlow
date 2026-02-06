@@ -15,6 +15,13 @@ def _run(
     directory: str,
     version: str,
     output: str,
+    test_results_dir: Annotated[
+        Optional[str],
+        Parameter(
+            name="--test-results-dir",
+            help="Path to a folder containing test result subfolders used by `autotest` blocks.",
+        ),
+    ] = None,
     top_left_logo: Annotated[
         Optional[str],
         Parameter(
@@ -40,6 +47,7 @@ def _run(
     document: Document = process_directory(directory, version=version)
     report: PdfReport = PdfReport(
         document,
+        test_results_dir=test_results_dir,
         top_left_logo_path=top_left_logo,
         top_right_logo_path=top_right_logo,
     )

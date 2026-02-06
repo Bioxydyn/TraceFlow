@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -110,3 +111,101 @@ class TestPdfGenerator(unittest.TestCase):
         self.assertTrue(cover_flags)
         self.assertTrue(all(flag is False for flag in cover_flags))
         self.assertEqual(len(cover_flags), len(outputs))
+
+    def test_autotest_requires_results_dir(self) -> None:
+        report = PdfReport(self._build_document())
+        with self.assertRaises(RuntimeError):
+            report._render_autotest_result("TEST-001")
+
+    def test_autotest_raises_for_missing_test_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            report = PdfReport(self._build_document(), test_results_dir=tmpdir)
+            with self.assertRaises(FileNotFoundError):
+                report._render_autotest_result("TEST-404")
+
+    def test_autotest_renders_markdown_with_staged_images(self) -> None:
+        with tempfile.TemporaryDirectory() as results_dir:
+            test_id = "TEST-IMG-001"
+            test_folder = Path(results_dir) / test_id
+            screenshots_folder = test_folder / "screenshots"
+            screenshots_folder.mkdir(parents=True, exist_ok=True)
+            (screenshots_folder / "screenshot-001.png").write_bytes(b"fake-png")
+            (test_folder / "result.md").write_text(
+                "\n".join(
+                    [
+                        f"# {test_id}",
+                        "",
+                        "- Kind: `test`",
+                        "- Status: `passed`",
+                        "",
+                        "## Screenshots",
+                        "",
+                        "![screenshot-001.png](screenshots/screenshot-001.png)",
+                        "",
+                    ]
+                )
+            )
+            report = PdfReport(self._build_document(), test_results_dir=results_dir)
+            with tempfile.TemporaryDirectory() as workdir:
+                cwd = os.getcwd()
+                os.chdir(workdir)
+                try:
+                    latex = report._render_autotest_result(test_id)
+                    self.assertIn("autotest-results/TEST-IMG-001/screenshots/screenshot-001.png", latex)
+                    staged_image = Path(workdir) / "autotest-results" / "TEST-IMG-001" / "screenshots" / "screenshot-001.png"  # noqa E501
+                    self.assertTrue(staged_image.exists())
+                finally:
+                    os.chdir(cwd)
+
+    def test_handle_code_plaintext_fallback_omits_language(self) -> None:
+        report = PdfReport(self._build_document())
+        latex = report.md_to_latex(
+            [
+                {
+                    "type": "block_code",
+                    "info": "text",
+                    "text": "line one\nline two",
+                }
+            ]
+        )
+        self.assertIn(r"\begin{lstlisting}", latex)
+        self.assertNotIn("[language=text]", latex)
+
+    def test_handle_code_keeps_valid_language(self) -> None:
+        report = PdfReport(self._build_document())
+        latex = report.md_to_latex(
+            [
+                {
+                    "type": "block_code",
+                    "info": "python",
+                    "text": "print('ok')",
+                }
+            ]
+        )
+        self.assertIn(r"\begin{lstlisting}[language=python]", latex)
+
+    def test_autotest_status_renders_bold_green_title_case(self) -> None:
+        with tempfile.TemporaryDirectory() as results_dir:
+            test_id = "TEST-STATUS-001"
+            test_folder = Path(results_dir) / test_id
+            test_folder.mkdir(parents=True, exist_ok=True)
+            (test_folder / "result.md").write_text(
+                "\n".join(
+                    [
+                        f"# {test_id}",
+                        "",
+                        "- Status: `passed`",
+                        "",
+                    ]
+                )
+            )
+
+            report = PdfReport(self._build_document(), test_results_dir=results_dir)
+            with tempfile.TemporaryDirectory() as workdir:
+                cwd = os.getcwd()
+                os.chdir(workdir)
+                try:
+                    latex = report._render_autotest_result(test_id)
+                    self.assertIn(r"Status: \textbf{\textcolor{green!50!black}{Passed}}", latex)
+                finally:
+                    os.chdir(cwd)

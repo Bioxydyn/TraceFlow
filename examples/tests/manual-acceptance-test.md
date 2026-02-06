@@ -1,4 +1,4 @@
-# Manual Acceptance Tests
+# Manual & Automatic Tests
 
 These are some general notes on this set of test. Other content within subsections are for specific tests.
 
@@ -42,7 +42,8 @@ The mismatch is quarantined and visible for operator review.
 
 ### Test Outcome:
 
-```manualtest
+```autotest
+TEST-002
 ```
 
 ## TEST-003: Pipeline validation evidence
