@@ -67,7 +67,10 @@ class TestPdfGenerator(unittest.TestCase):
     def test_process_text(self) -> None:
         text = "This is some text with a UNIQUE-ID-001 and `code formatted` text too."
         latex = PdfReport.process_text_impl(text, {"UNIQUE-ID-001"})
-        expected = r"This is some text with a \hyperref[UNIQUE-ID-001]{UNIQUE-ID-001} and \texttt{code formatted} text too."  # noqa
+        expected = (
+            r"This is some text with a \hyperref[UNIQUE-ID-001]{\textbf{UNIQUE-ID-001}}"
+            r" and \texttt{code formatted} text too."
+        )
         self.assertEqual(latex, expected)
 
     def test_evaluate_risk_rating(self) -> None:

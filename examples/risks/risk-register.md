@@ -162,19 +162,19 @@ Residual Probability: Low
 
 Residual Risk: Acceptable when quarterly SOP reviews confirm retention evidence is archived.
 
-## RISK-009: Automated test evidence missing
+## RISK-009: Test evidence missing
 
-Hazardous Situation: Regression runs referenced by **TEST-003** fail but their output is not included in the validation pack.
+Hazardous Situation: Validation evidence referenced by **TEST-003** is not included in the validation pack.
 
 Harm: Release approvals rely on incomplete evidence trails.
 
-Cause: Operator forgets to pass `--playwright-dir` or the CI job skips the autotest block.
+Cause: Operator does not attach the checklist evidence for manual test execution.
 
 Severity: Medium
 
 Probability: Medium
 
-Controls: TraceFlow CLI guards that raise on missing artifacts plus the process captured in `docs/ius.md`.
+Controls: Release checklist gates in `docs/ius.md` require evidence attachment before sign-off.
 
 Residual Severity: Low
 
