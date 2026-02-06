@@ -34,6 +34,7 @@ The platform must support importing MRI datasets in DICOM format.
 ### Example flow chart (using mermaid)
 
 ```mermaid
+%% caption: MRI image analysis pipeline flow
 graph LR
 A[Preprocessing] --> B[Segmentation]
 B --> C[Feature extraction]
@@ -70,6 +71,7 @@ The ingestion service shall ensure that study metadata stays associated with the
 ### Example sequence diagram
 
 ```mermaid
+%% caption: Patient-study identifier reconciliation sequence
 sequenceDiagram
     participant PACS
     participant TraceFlow

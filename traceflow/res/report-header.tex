@@ -1,7 +1,8 @@
 \documentclass[10pt,a4paper]{article}
 \usepackage[T1]{fontenc}
 \usepackage{geometry}
-\geometry{verbose,tmargin=3.0cm,bmargin=2.0cm,lmargin=1.5cm,rmargin=1.5cm,headheight=38pt}
+\geometry{margin=1.8cm,top=1.7cm,bottom=1.5cm,headheight=48pt,headsep=10pt}
+\usepackage[scaled=0.9]{helvet}
 \renewcommand{\familydefault}{\sfdefault}
 
 \usepackage{tabularx} % in the preamble
@@ -18,6 +19,8 @@
 \usepackage{diagbox}
 \usepackage{pdflscape}
 \usepackage{float}
+\usepackage{titlesec}
+\usepackage{enumitem}
 
 \newcolumntype{R}[2]{%
     >{\adjustbox{angle=#1,lap=\width-(#2)}\bgroup}%
@@ -36,7 +39,7 @@
 \usepackage{lastpage}
 
 \usepackage[utf8]{inputenc}
-\usepackage[hidelinks]{hyperref}
+\usepackage{hyperref}
 
 \usepackage{pgfplots}
 \DeclareUnicodeCharacter{2212}{−}
@@ -67,36 +70,75 @@
 \newcommand*{\emptycheck}{\hspace{0.2cm}\makebox[0pt][l]{$\square$}{}\hspace{0.8cm}}
 \newcommand*{\positivecheck}{\hspace{0.2cm}\makebox[0pt][l]{$\square$}\raisebox{.15ex}{\hspace{0.1em}$\checkmark$}\hspace{0.8cm}}
 \newcommand*{\negativecheck}{\hspace{0.2cm}\makebox[0pt][l]{$\square$}{$\times$}\hspace{0.8cm}}
-
-\title{\VAR{report_title}}
-\begin{document}
-
-\setlength{\topmargin}{-56pt}
-\setlength{\headsep}{18pt}
-\setlength{\footskip}{55pt}
-
-\fancypagestyle{plain}{
-  \fancyhf{}% Clear header/footer
-	\fancyhead[L]{
-	\includegraphics[width=4cm,keepaspectratio]{\VAR{top_left_logo}}
-	}
-	\fancyhead[R]{
-        \textbf{\Large{\VAR{report_title}}}
-    }
-	\lfoot{
-	\includegraphics[width=3cm,keepaspectratio]{\VAR{top_right_logo}}
-	}
-	\rfoot{\emph{Page \thepage\ of \pageref{LastPage}}}
-	\cfoot{Report produced using TraceFlow \VAR{version} }
-	\renewcommand{\headrulewidth}{0.4pt}
-	\renewcommand{\footrulewidth}{0.4pt}
+\definecolor{darkblue}{RGB}{0, 51, 102}
+\definecolor{lightgray}{RGB}{240, 240, 240}
+\newcommand{\traceflowtopleftlogo}{\VAR{top_left_logo}}
+\newcommand{\traceflowtoprightlogo}{\VAR{top_right_logo}}
+\newcommand{\traceflowstandardlogowidth}{4.0cm}
+\newcommand{\traceflowwidelogowidth}{6.0cm}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=darkblue,
+  urlcolor=blue,
+  citecolor=darkblue
 }
-\pagestyle{plain}% Set page style to plain.
-\maketitle
+\urlstyle{same}
+
+% Compact document spacing
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{2pt}
+\setlength{\LTpre}{0pt}
+\setlength{\LTpost}{0pt}
+\setlength{\textfloatsep}{8pt plus 2pt minus 2pt}
+\setlength{\floatsep}{6pt plus 2pt minus 2pt}
+\setlength{\intextsep}{6pt plus 2pt minus 2pt}
+\renewcommand{\arraystretch}{1.15}
+\setlist[itemize]{noitemsep, topsep=2pt, parsep=1pt, partopsep=0pt, leftmargin=1.5em}
+\setlist[enumerate]{noitemsep, topsep=2pt, parsep=1pt, partopsep=0pt, leftmargin=1.5em}
+\titleformat{\section}
+  {\normalfont\large\bfseries\color{darkblue}}
+  {}{0em}{}[\titlerule]
+\titlespacing*{\section}{0pt}{1.2ex}{0.8ex}
+\titleformat{\subsection}
+  {\normalfont\normalsize\bfseries\color{darkblue}}
+  {}{0em}{}
+\titlespacing*{\subsection}{0pt}{0.8ex}{0.5ex}
+\titleformat{\subsubsection}
+  {\normalfont\normalsize\bfseries}
+  {}{0em}{}
+\titlespacing*{\subsubsection}{0pt}{0.5ex}{0.3ex}
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  breakatwhitespace=true,
+  showstringspaces=false,
+  aboveskip=5pt,
+  belowskip=5pt
+}
+
+\begin{document}
+\fancyhf{}
+\fancyhead[L]{\includegraphics[width=\traceflowstandardlogowidth,keepaspectratio]{\traceflowtopleftlogo}}
+\fancyhead[R]{\includegraphics[width=\traceflowstandardlogowidth,keepaspectratio]{\traceflowtoprightlogo}}
+\fancyhfoffset[L]{0pt}
+\fancyhfoffset[R]{0pt}
+\fancyfoot[L]{\footnotesize Report produced using TraceFlow \VAR{version}}
+\fancyfoot[R]{\footnotesize Page \thepage\ of \pageref{LastPage}}
+\renewcommand{\headrulewidth}{0.3pt}
+\renewcommand{\footrulewidth}{0pt}
+\pagestyle{fancy}
+\setlength{\headwidth}{\textwidth}
+
+\begin{center}
+    \vspace*{0.4cm}
+    {\LARGE \textbf{\VAR{report_title}}} \\[0.25em]
+    {\small \textbf{Generated:} \today}
+\end{center}
+\vspace{0.3cm}
 
 \BLOCK{ if include_cover_page }
-\begin{table}[h]
-\renewcommand{\arraystretch}{2} % Increases the height of each row
+\begin{table}[H]
+\renewcommand{\arraystretch}{1.35}
 \arrayrulecolor{gray} % Set the color of the horizontal and vertical lines to gray
 \begin{tabular}{|>{\columncolor{gray!30}}m{0.45\linewidth}|m{0.45\linewidth}|}
 \hline
@@ -108,21 +150,21 @@
 \hline
 \textbf{Test Date} & \\
 \hline
-\textbf{Initial Report Generation Date} & \date{\today} \\
+\textbf{Initial Report Generation Date} & \today \\
 \hline
 \textbf{Result} & \\
 \hline
-\textbf{Approved Usage} \vspace*{2\baselineskip} & \\ % Add vertical space within this cell
+\textbf{Approved Usage} \vspace*{1\baselineskip} & \\
 \hline
 \end{tabular}
 \end{table}
 
-\vspace{1cm}
+\vspace{0.4cm}
 
 
 \begin{minipage}{0.45\textwidth}
-\large % Increase the font size
-\setlength{\baselineskip}{20pt} % Increase the line spacing
+\normalsize
+\setlength{\baselineskip}{14pt}
 \noindent \textbf{Manual tests carried out by:}
 
 \noindent \rule{6cm}{0.4pt} \\
@@ -139,8 +181,8 @@
 \end{minipage}
 \hfill
 \begin{minipage}{0.45\textwidth}
-\large % Increase the font size
-\setlength{\baselineskip}{20pt} % Increase the line spacing
+\normalsize
+\setlength{\baselineskip}{14pt}
 \noindent \textbf{Validation pack result approved by:}
 
 \noindent \rule{6cm}{0.4pt} \\

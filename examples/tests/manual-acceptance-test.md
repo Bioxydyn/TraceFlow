@@ -25,44 +25,41 @@ The user is logged in and redirected to the main dashboard.
 ```manualtest
 ```
 
-## TEST-002: Automatic Playwright test
+## TEST-002: Identifier reconciliation workflow
 
 **Requirement ID:** REQ-003
 **Requirement ID:** REQ-005
 
 ### Test Steps:
 
-1. The `autoplaywright` block runs the Playwright sample located in the `playwright/` directory and captures the video, stdout/stderr, and a 3×3 key frame grid from the test execution.
-2. The scripted run intentionally drives a patient-identifier edit workflow to demonstrate the mitigation for **RISK-001**.
+1. Open the patient identifier reconciliation workflow.
+2. Trigger an identifier mismatch and verify the application quarantines the record.
+3. Confirm the mismatch appears in the operator review queue.
 
 ### Expected Result:
 
-The test should pass successfully.
+The mismatch is quarantined and visible for operator review.
 
 ### Test Outcome:
 
-```autoplaywright
-0001-test-counter
+```manualtest
 ```
 
-## TEST-003: Automatic test
+## TEST-003: Pipeline validation evidence
 
 **Requirement ID:** REQ-003
 
 ### Test Steps:
 
-1. This `autotest` block demonstrates running a simple pytest command as part of the report.
-2. The quick-running suite doubles as a guardrail for **RISK-002** and **RISK-003**; failures block deployments.
+1. Execute the release pipeline checks for preprocessing, segmentation, and classification.
+2. Review the output evidence and attach the run ID to the release checklist.
+3. Record pass or fail status in this manual section.
 
 ### Expected Result:
 
-The test should pass successfully.
+The pipeline checks complete successfully and evidence is attached to the release record.
 
 ### Test Outcome:
 
-```autoplaywright
-0001-test-counter
-```
-```autotest
-pytest --disable-warnings -sv tests/test_hello_world.py
+```manualtest
 ```

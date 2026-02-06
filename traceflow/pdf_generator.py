@@ -10,7 +10,6 @@ import string
 from typing import Generator, NamedTuple, Optional
 
 import latex.jinja2
-from PIL import Image, ImageDraw, ImageFont
 
 try:
     import cairosvg
@@ -30,23 +29,6 @@ from traceflow.parser import (
 from traceflow.version import __version__
 
 _latex_jinja2_env = latex.jinja2.make_env()
-
-PLAYWRIGHT_MAX_FRAMES = 9
-_PLAYWRIGHT_LOG_CHAR_MAP: dict[str, str] = {
-    "✓": "[PASS]",
-    "✔": "[PASS]",
-    "›": ">",
-    "➜": "->",
-    "…": "...",
-    "–": "-",
-    "—": "--",
-    "‘": "'",
-    "’": "'",
-    "“": '"',
-    "”": '"',
-}
-
-PLAYWRIGHT_MAX_FRAMES = 9
 
 
 class IndividualReportSpec(NamedTuple):
@@ -130,7 +112,7 @@ class PdfReport():
             core = word[leading:trailing] if trailing > leading else word[leading:]
             altered_word = core.replace(":", "")
             if altered_word in unique_ids and core:
-                words[index] = f"{prefix}\\hyperref[{altered_word}]{{{core}}}{suffix}"
+                words[index] = f"{prefix}\\hyperref[{altered_word}]{{\\textbf{{{core}}}}}{suffix}"
 
         # 3. Rebuild the text
         new_text = " ".join(words)
@@ -226,6 +208,7 @@ class PdfReport():
             table += "\\setlength\\tabcolsep{0pt}\n"
             # Build the table. There should be a tick in the cell if the test is linked to the requirement,
             # otherwise it should be empty
+            table += "\\begingroup\n"
             table += "\\rowcolors{2}{gray!25}{white}\n"
             table += "\\begin{table}[h]\n"
             table += "\\centering\n"
@@ -259,6 +242,7 @@ class PdfReport():
 
             table += "\\end{tabular}\n"
             table += "\\end{table}\n\n"
+            table += "\\endgroup\n"
 
             if large_matrix:
                 table += "\\end{landscape}\n"
@@ -305,6 +289,9 @@ class PdfReport():
             "\\pdfpageheight=297mm",
             "\\special{papersize=420mm,297mm}",
             "\\newgeometry{paperwidth=420mm,paperheight=297mm,left=15mm,right=15mm,top=20mm,bottom=20mm}",
+            "\\setlength{\\headwidth}{\\textwidth}",
+            "\\fancyhead[L]{\\includegraphics[width=\\traceflowwidelogowidth,keepaspectratio]{\\traceflowtopleftlogo}}",
+            "\\fancyhead[R]{\\includegraphics[width=\\traceflowwidelogowidth,keepaspectratio]{\\traceflowtoprightlogo}}",
             "\\footnotesize",
             "\\setlength\\tabcolsep{3pt}",
             "\\renewcommand{\\arraystretch}{1.3}",
@@ -390,6 +377,9 @@ class PdfReport():
                 "\\bottomrule",
                 "\\end{longtable}",
                 "\\restoregeometry",
+                "\\setlength{\\headwidth}{\\textwidth}",
+                "\\fancyhead[L]{\\includegraphics[width=\\traceflowstandardlogowidth,keepaspectratio]{\\traceflowtopleftlogo}}",
+                "\\fancyhead[R]{\\includegraphics[width=\\traceflowstandardlogowidth,keepaspectratio]{\\traceflowtoprightlogo}}",
                 "\\setlength{\\paperwidth}{210mm}",
                 "\\setlength{\\paperheight}{297mm}",
                 "\\pdfpagewidth=210mm",
@@ -453,13 +443,15 @@ class PdfReport():
 
         def handle_image(item: dict) -> str:
             url = item["src"]
+            alt_text = self.process_text(item.get("alt", ""))
             latex = [
                 '\n\\begin{figure}[H]',
                 '\n\\centering',
                 f'\n\\includegraphics[width=0.5\\textwidth]{{{url}}}',
-                f'\n\\caption{{{self.process_text(item["alt"])}}}',
-                '\n\\end{figure}',
             ]
+            if alt_text.strip():
+                latex.append(f'\n\\caption{{{alt_text}}}')
+            latex.append('\n\\end{figure}')
             return ''.join(latex)
 
         def handle_block_code(item: dict) -> str:
@@ -475,10 +467,6 @@ class PdfReport():
                 return handle_manual_test(item)
             if code_type == "testcoverpage":
                 return handle_test_cover_page(item)
-            if code_type == "autotest":
-                return handle_auto_test(item)
-            if code_type == "autoplaywright":
-                return handle_playwright_test(item)
             return handle_code(item)
 
         def render_children(children: list[dict]) -> str:
@@ -499,6 +487,7 @@ class PdfReport():
 
             column_spec = "|".join(["X"] * max(len(header_cells), 1))
             latex_lines = [
+                "\\begingroup",
                 "\\begin{table}[h]",
                 "\\centering",
                 "\\rowcolors{2}{gray!10}{white}",
@@ -510,12 +499,13 @@ class PdfReport():
                 latex_lines.append(" & ".join(row) + " \\\\ \\hline")
             latex_lines.append("\\end{tabularx}")
             latex_lines.append("\\end{table}")
+            latex_lines.append("\\endgroup")
             return "\n".join(latex_lines)
 
         def handle_test_cover_page(_: dict) -> str:
             return r"""
 \begin{table}[h]
-\renewcommand{\arraystretch}{2} % Increases the height of each row
+\renewcommand{\arraystretch}{1.35}
 \arrayrulecolor{gray} % Set the color of the horizontal and vertical lines to gray
 \begin{tabular}{|>{\columncolor{gray!30}}m{0.45\linewidth}|m{0.45\linewidth}|}
 \hline
@@ -525,79 +515,15 @@ class PdfReport():
 \hline
 \textbf{Result} & \\
 \hline
-\textbf{Observations} \vspace*{3\baselineskip} & \\ % Add vertical space within this cell
+\textbf{Observations} \vspace*{1.5\baselineskip} & \\
 \hline
 \end{tabular}
 \end{table}
 
-\vspace{1cm}
+\vspace{0.3cm}
 \newpage
 
 """
-
-        def handle_auto_test(item: dict) -> str:
-            content: str = item["text"]
-            assert content is not None
-            assert isinstance(content, str)
-
-            # Content is a script, to be executed. We need to capture the exit code and the stdout & stderr. We classify
-            # the test as a pass if the exit code is 0, and a fail otherwise. We also capture the stdout and stderr and
-            # include them in the report, in full colour using ANSI escape codes.
-
-            # 1. Write the script to a temporary file
-            script_filename = PdfReport.get_temporary_filename(suffix=".sh", force_random=True)
-            # Get the full path to the script file
-            script_filename = os.path.join(os.getcwd(), script_filename)
-            with open(script_filename, "w") as f:
-                f.write(content)
-
-            # 2. Execute the script
-            content_summary = content.strip().split("\n")[0]
-            print(f"Executing test: {content_summary}")
-            current_directory = os.getcwd()
-            try:
-                os.chdir(self.original_working_directory)
-                output = subprocess.check_output(["bash", script_filename], stderr=subprocess.STDOUT)  # noqa S603, S607
-                exit_code = 0
-            except subprocess.CalledProcessError as e:
-                output = e.output
-                exit_code = e.returncode
-            finally:
-                os.chdir(current_directory)
-
-            # 3. Convert the output to a string
-            output_str: str = output.decode("utf-8")
-
-            if exit_code != 0:
-                print(f"Test failed: {content_summary}")
-                print(output_str)
-
-            if len(output_str) > 40000:
-                output_str = output_str[:40000] + " ... [truncated]"
-
-            def create_latex_markup(is_pass: bool) -> str:
-                if is_pass:
-                    return r"""\textbf{Pass} \CheckedBox \hspace{2cm} \textbf{Fail} \Square \hspace{2cm} \textbf{Skip} \Square \\
-"""  # noqa E501
-                return r"""\textbf{Pass} \Square \hspace{2cm} \textbf{Fail} \CheckedBox \hspace{2cm} \textbf{Skip} \Square \\
-"""  # noqa E501
-
-            return r"""
-\noindent
-""" + create_latex_markup(is_pass=exit_code == 0) + "\n" + r"""
-\vspace{0.2cm}
-\begin{lstlisting}[language=bash, basicstyle=\ttfamily\small, breaklines=true, breakatwhitespace=true, showstringspaces=false, escapeinside={(*}{*)}]
-""" + output_str + "\n" + r"""
-\end{lstlisting}"""  # noqa E501
-
-        def handle_playwright_test(item: dict) -> str:
-            content: str = item.get("text", "")
-            lines = [line.strip() for line in content.splitlines() if line.strip()]
-            if not lines:
-                raise ValueError("autoplaywright blocks must include the Playwright test ID")
-            test_name = lines[0]
-            notes_text = " ".join(lines[1:])
-            return self._render_playwright_test_section(test_name, notes_text)
 
         def handle_manual_test(_: dict) -> str:
             pass_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))  # noqa S311
@@ -608,9 +534,9 @@ class PdfReport():
 \noindent
 \begin{Form}
 \textbf{Pass} \CheckBox[name=""" + pass_id + r"""]{} \hspace{2cm} \textbf{Fail} \CheckBox[name=""" + fail_id + r"""]{} \hspace{2cm} \textbf{Skip} \CheckBox[name=""" + skip_id + r"""]{} \\
-\vspace{0.2cm}
+\vspace{0.05cm}
 \textbf{Comments} \\
-\TextField[name=""" + comment_id + r""", multiline=true, width=\linewidth, height=2cm]{}
+\TextField[name=""" + comment_id + r""", multiline=true, width=\linewidth, height=1.2cm]{}
 \end{Form}
         """  # noqa E501
 
@@ -625,11 +551,19 @@ class PdfReport():
             return f"\\begin{{lstlisting}}\n{code_content}\n\\end{{lstlisting}}"
 
         def handle_mermaid(item: dict) -> str:
-
             svg_path = PdfReport.get_temporary_filename(suffix=".svg", force_random=True)
             mmd_path = PdfReport.get_temporary_filename(suffix=".mmd", force_random=True)
 
             mermaid_code = item["text"]
+            caption_text = ""
+            mermaid_lines = mermaid_code.splitlines()
+            if mermaid_lines:
+                first_line = mermaid_lines[0].strip()
+                caption_match = re.match(r"^%%\s*caption\s*:\s*(.+)$", first_line, re.IGNORECASE)
+                if caption_match:
+                    caption_text = caption_match.group(1).strip()
+                    mermaid_code = "\n".join(mermaid_lines[1:])
+
             with open(mmd_path, "w") as mmd_file:
                 mmd_file.write(mermaid_code)
 
@@ -652,7 +586,7 @@ class PdfReport():
                         f" with: {_CAIROSVG_IMPORT_ERROR}"
                     )
                 cairosvg.svg2pdf(url=svg_path, write_to=pdf_path)
-            return handle_image({"src": pdf_path, "alt": "", "title": "", "type": "image"})
+            return handle_image({"src": pdf_path, "alt": caption_text, "title": "", "type": "image"})
 
         def handle_item(item: dict) -> str:
             handlers = {
@@ -685,242 +619,85 @@ class PdfReport():
             latex.append(handle_item(item))
         return "\n".join(latex)
 
-    def _render_playwright_test_section(self, test_name: str, notes_text: str) -> str:
-        video_path, log_path, exit_code = self._execute_playwright_test(test_name)
-        log_output = self._read_playwright_log(log_path)
-        grid_basename = self._build_playwright_grid(video_path)
+    @staticmethod
+    def _extract_ast_heading_text(item: dict) -> str:
+        if item.get("type") != "heading":
+            return ""
+        text_fragments: list[str] = []
+        for child in item.get("children", []):
+            if child.get("type") in {"text", "codespan"}:
+                text_fragments.append(child.get("text", ""))
+        return "".join(text_fragments).strip()
 
-        def create_latex_markup(is_pass: bool) -> str:
-            if is_pass:
-                return (
-                    r"\textbf{Pass} \CheckedBox \hspace{2cm} \textbf{Fail} \Square "
-                    r"\hspace{2cm} \textbf{Skip} \Square \\"
-                )
-            return (
-                r"\textbf{Pass} \Square \hspace{2cm} \textbf{Fail} \CheckedBox "
-                r"\hspace{2cm} \textbf{Skip} \Square \\"
-            )
-
-        status_block = create_latex_markup(is_pass=exit_code == 0)
-        body: list[str] = [r"\noindent", status_block, r"\vspace{0.2cm}"]
-        body.append(f"\\textbf{{Playwright Test:}} {self.process_text(test_name)} \\\\")
-        if notes_text:
-            body.append(f"\\textbf{{Test Notes:}} {self.process_text(notes_text)} \\\\")
-
-        if grid_basename:
-            body.append(
-                "\\begin{figure}[H]\n"
-                "\\centering\n"
-                f"\\includegraphics[width=\\linewidth]{{{grid_basename}}}\n"
-                f"\\caption{{Key frames captured from {self.process_text(test_name)}}}\n"
-                "\\end{figure}"
-            )
-        else:
-            body.append("\\textit{Key frames not available for this run.}")
-
-        body.append(
-            "\\vspace{0.2cm}\n"
-            "\\begin{lstlisting}[language=bash, basicstyle=\\ttfamily\\small, "
-            "breaklines=true, breakatwhitespace=true, "
-            "showstringspaces=false, escapeinside={(*}{*)}]\n"
-            + log_output
-            + "\n"
-            + "\\end{lstlisting}"
+    def _render_test_steps_expected_columns(self, steps_items: list[dict], expected_items: list[dict]) -> str:
+        steps_latex = self.md_to_latex(steps_items).strip() or r"\textit{Not provided.}"
+        expected_latex = self.md_to_latex(expected_items).strip() or r"\textit{Not provided.}"
+        return (
+            r"\begingroup" "\n"
+            r"\rowcolors{2}{white}{white}" "\n"
+            r"\begin{table}[H]" "\n"
+            r"\setlength{\tabcolsep}{4pt}" "\n"
+            r"\renewcommand{\arraystretch}{1.05}" "\n"
+            r"\begin{tabularx}{\linewidth}{|>{\raggedright\arraybackslash}X|>{\raggedright\arraybackslash}X|}" "\n"
+            r"\hline" "\n"
+            r"\rowcolor{gray!15}\textbf{Test Steps} & \textbf{Expected Result} \\" "\n"
+            r"\hline" "\n"
+            r"\begin{minipage}[t]{\linewidth}\vspace{0pt}" "\n"
+            + steps_latex + "\n"
+            + r"\end{minipage} &" "\n"
+            + r"\begin{minipage}[t]{\linewidth}\vspace{0pt}" "\n"
+            + expected_latex + "\n"
+            + r"\end{minipage} \\" "\n"
+            + r"\hline" "\n"
+            + r"\end{tabularx}" "\n"
+            + r"\end{table}" "\n"
+            + r"\endgroup"
         )
 
-        return "\n".join(body)
+    def render_test_content(self, items: list[dict]) -> str:
+        steps_heading_index: Optional[int] = None
+        expected_heading_index: Optional[int] = None
 
-    def _execute_playwright_test(self, test_name: str) -> tuple[str, str, int]:
-        if not self.playwright_dir:
-            raise RuntimeError(
-                "autoplaywright tests require --playwright-dir to be set so Playwright artifacts can be produced."
-            )
-        script_path = os.path.join(self.playwright_dir, "run-test-video.sh")
-        if not os.path.isfile(script_path):
-            raise FileNotFoundError(f"Playwright runner script not found: {script_path}")
+        for index, item in enumerate(items):
+            if item.get("type") != "heading" or item.get("level") != 3:
+                continue
+            heading_text = self._extract_ast_heading_text(item).lower().rstrip(":")
+            if steps_heading_index is None and heading_text in {"test steps", "steps"}:
+                steps_heading_index = index
+                continue
+            if (
+                steps_heading_index is not None
+                and heading_text in {"expected result", "expected outcome", "expected output"}
+            ):
+                expected_heading_index = index
+                break
 
-        video_output = os.path.join(os.getcwd(), self.get_temporary_filename(suffix=".webm"))
-        log_output = os.path.join(os.getcwd(), self.get_temporary_filename(suffix=".txt"))
+        if (
+            steps_heading_index is None
+            or expected_heading_index is None
+            or expected_heading_index <= steps_heading_index
+        ):
+            return self.md_to_latex(items)
 
-        command = ["bash", script_path, test_name, video_output, log_output]
-        try:
-            subprocess.run(command, cwd=self.playwright_dir, check=True)  # noqa S603
-            exit_code = 0
-        except subprocess.CalledProcessError as exc:
-            exit_code = exc.returncode
+        expected_end = len(items)
+        for index in range(expected_heading_index + 1, len(items)):
+            item = items[index]
+            if item.get("type") == "heading" and item.get("level", 99) <= 3:
+                expected_end = index
+                break
 
-        return video_output, log_output, exit_code
+        prefix = items[:steps_heading_index]
+        steps_items = items[steps_heading_index + 1:expected_heading_index]
+        expected_items = items[expected_heading_index + 1:expected_end]
+        suffix = items[expected_end:]
 
-    def _read_playwright_log(self, log_path: str) -> str:
-        if not os.path.exists(log_path):
-            return "No Playwright output captured."
-        with open(log_path, "r", encoding="utf-8", errors="replace") as log_file:
-            log_content = log_file.read()
-        sanitized = log_content
-        for original, replacement in _PLAYWRIGHT_LOG_CHAR_MAP.items():
-            sanitized = sanitized.replace(original, replacement)
-        sanitized = sanitized.replace("\r\n", "\n")
-        sanitized = ''.join(ch if ord(ch) < 128 else "?" for ch in sanitized)
-        if len(sanitized) > 40000:
-            return sanitized[:40000] + " ... [truncated]"
-        return sanitized
-
-    def _build_playwright_grid(self, video_path: str) -> Optional[str]:
-        if not os.path.exists(video_path):
-            return None
-
-        ffmpeg_path, ffprobe_path = self._ensure_ffmpeg_available()
-        timestamps = self._select_keyframe_timestamps(video_path, ffprobe_path)
-        if not timestamps:
-            return None
-
-        frame_entries: list[tuple[str, float]] = []
-        try:
-            for ts in timestamps:
-                frame_output = os.path.join(
-                    os.getcwd(), self.get_temporary_filename(suffix=".png", force_random=True)
-                )
-                command = [
-                    ffmpeg_path, "-hide_banner", "-loglevel", "error", "-y",
-                    "-ss", f"{ts:.3f}", "-i", video_path, "-frames:v", "1", frame_output
-                ]
-                try:
-                    subprocess.run(command, check=True)  # noqa S603
-                    if os.path.exists(frame_output):
-                        frame_entries.append((frame_output, ts))
-                except subprocess.CalledProcessError:
-                    continue
-
-            if not frame_entries:
-                return None
-
-            collage_path = os.path.join(
-                os.getcwd(), self.get_temporary_filename(suffix=".png", force_random=True)
-            )
-            self._compose_frame_grid(frame_entries, collage_path)
-            if os.path.exists(collage_path):
-                return os.path.basename(collage_path)
-
-            return None
-        finally:
-            for frame_path, _ in frame_entries:
-                try:
-                    os.remove(frame_path)
-                except OSError:
-                    pass
-
-    def _compose_frame_grid(self, frame_entries: list[tuple[str, float]], collage_path: str) -> None:
-        images = [(Image.open(path).convert("RGB"), timestamp) for path, timestamp in frame_entries]
-        if not images:
-            return
-
-        try:
-            resample = Image.Resampling.LANCZOS
-        except AttributeError:
-            resample = getattr(Image, "LANCZOS", 1)
-
-        base_width, base_height = images[0][0].size
-        scale = min(1.0, 360 / base_width) if base_width else 1.0
-        target_width = max(1, int(base_width * scale))
-        target_height = max(1, int(base_height * scale))
-        font = ImageFont.load_default()
-        resized: list[Image.Image] = []
-        for img, timestamp in images:
-            resized_img = img.resize((target_width, target_height), resample=resample)
-            draw = ImageDraw.Draw(resized_img)
-            timestamp_text = f"{timestamp:.2f}s"
-            bbox = draw.textbbox((0, 0), timestamp_text, font=font)
-            text_width = bbox[2] - bbox[0]
-            text_height = bbox[3] - bbox[1]
-            padding = 4
-            overlay_x = padding
-            overlay_y = max(0, target_height - text_height - padding - 2)
-            draw.rectangle(
-                [
-                    overlay_x - 2,
-                    overlay_y - 2,
-                    overlay_x + text_width + 4,
-                    overlay_y + text_height + 4,
-                ],
-                fill=(0, 0, 0),
-            )
-            draw.text(
-                (overlay_x, overlay_y),
-                timestamp_text,
-                fill=(255, 255, 255),
-                font=font,
-            )
-            resized.append(resized_img)
-
-        grid_size = 3
-        grid_image = Image.new("RGB", (target_width * grid_size, target_height * grid_size), (20, 20, 20))
-
-        for position in range(grid_size * grid_size):
-            row = position // grid_size
-            col = position % grid_size
-            x = col * target_width
-            y = row * target_height
-            if position < len(resized):
-                grid_image.paste(resized[position], (x, y))
-
-        grid_image.save(collage_path, format="PNG")
-
-    def _select_keyframe_timestamps(self, video_path: str, ffprobe_path: str) -> list[float]:
-        duration = self._get_video_duration(video_path, ffprobe_path)
-        if duration <= 0:
-            return [0.0]
-
-        timestamps: list[float] = []
-        for index in range(PLAYWRIGHT_MAX_FRAMES):
-            if PLAYWRIGHT_MAX_FRAMES == 1:
-                ts = 0.0
-            else:
-                ts = duration * index / (PLAYWRIGHT_MAX_FRAMES - 1)
-            timestamps.append(ts)
-
-        unique_timestamps: list[float] = []
-        for ts in timestamps:
-            if not unique_timestamps or abs(ts - unique_timestamps[-1]) > 1e-6:
-                unique_timestamps.append(ts)
-        return unique_timestamps
-
-    def _get_video_duration(self, video_path: str, ffprobe_path: str) -> float:
-        try:
-            completed = subprocess.run(  # noqa S603
-                [
-                    ffprobe_path,
-                    "-v", "error",
-                    "-show_entries", "format=duration",
-                    "-of", "default=noprint_wrappers=1:nokey=1",
-                    video_path,
-                ],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-        except subprocess.CalledProcessError as exc:
-            raise RuntimeError(f"Failed to read video duration: {exc}") from exc
-
-        try:
-            return max(0.0, float(completed.stdout.strip()))
-        except ValueError:
-            return 0.0
-
-    def _ensure_ffmpeg_available(self) -> tuple[str, str]:
-        ffmpeg_path = shutil.which("ffmpeg")
-        ffprobe_path = shutil.which("ffprobe")
-        missing = []
-        if not ffmpeg_path:
-            missing.append("ffmpeg")
-        if not ffprobe_path:
-            missing.append("ffprobe")
-        if missing:
-            raise RuntimeError(
-                "The autoplaywright feature requires ffmpeg/ffprobe but the following binaries were not found: "
-                + ", ".join(missing)
-            )
-        assert ffmpeg_path is not None and ffprobe_path is not None
-        return ffmpeg_path, ffprobe_path
+        fragments: list[str] = []
+        if prefix:
+            fragments.append(self.md_to_latex(prefix))
+        fragments.append(self._render_test_steps_expected_columns(steps_items, expected_items))
+        if suffix:
+            fragments.append(self.md_to_latex(suffix))
+        return "\n".join(fragment for fragment in fragments if fragment)
 
     @staticmethod
     def get_global_tex_vars() -> dict[str, str]:
@@ -958,20 +735,12 @@ class PdfReport():
         self,
         document: Document,
         *,
-        playwright_dir: Optional[str] = None,
         top_left_logo_path: Optional[str] = None,
         top_right_logo_path: Optional[str] = None,
     ):
         self.document = document
-        self.original_working_directory = os.getcwd()
         self.top_left_logo_path = top_left_logo_path
         self.top_right_logo_path = top_right_logo_path
-        self.playwright_dir: Optional[str] = None
-        if playwright_dir:
-            resolved_playwright_dir = os.path.abspath(playwright_dir)
-            if not os.path.isdir(resolved_playwright_dir):
-                raise FileNotFoundError(f"Playwright directory does not exist: {resolved_playwright_dir}")
-            self.playwright_dir = resolved_playwright_dir
         self.unique_ids = self._collect_unique_ids()
 
     @staticmethod
@@ -1079,7 +848,7 @@ class PdfReport():
                         for test in test_page.items:
                             document += "\\subsection{" + self.process_text(test.test_id + ": " + test.title) + "}"
                             document += "\\label{" + test.test_id + "}\n\n"
-                            document += self.md_to_latex(test.content)
+                            document += self.render_test_content(test.content)
                             document += "\n\n"
 
                         document += "\\newpage\n\n"

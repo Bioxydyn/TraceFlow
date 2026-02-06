@@ -2,7 +2,7 @@
 
 ![TraceFlow Logo](./traceflow/res/traceflow-logo.png)
 
-TraceFlow is a Python library designed to help manage software development documentation and testing processes, streamlining the production of requirements, design documents, and test cases (both automated and manual). With built-in support for PDF export, you can easily sign the output making TraceFlow particularly suited for projects in regulated environments or environments where compliance with 21 CFR 11 is necessary.
+TraceFlow is a Python library designed to help manage software development documentation and testing processes, streamlining the production of requirements, design documents, and manual test cases. With built-in support for PDF export, you can easily sign the output making TraceFlow particularly suited for projects in regulated environments or environments where compliance with 21 CFR 11 is necessary.
 
 By leveraging TraceFlow, you can:
 
@@ -11,7 +11,6 @@ By leveraging TraceFlow, you can:
 - Generate a traceability matrix linking all requirements to all tests.
 - Capture structured risk registers with requirement/test cross-links and colour-coded pre/post-mitigation risk levels.
 - Create fillable PDF forms for manual tests.
-- Run automated tests and capture their output as Markdown, then include them in the PDF report.
 - The result will look something [like this](example.pdf)
 
 ## Getting Started
@@ -64,17 +63,15 @@ Append `--individual-pdfs` to also emit per-section PDFs alongside the combined 
 `1corelab-validation-pack-requirements.pdf`, and `1corelab-validation-pack-tests.pdf` when those sections exist in your
 source documents.
 
-### Running the Playwright example
+### Running the example
 
-TraceFlow includes the `examples` directory, which demonstrates `autoplaywright` tests that invoke the Playwright scripts in this repo. To reproduce that example, run:
+TraceFlow includes the `examples` directory with requirements, design, risks, and manual tests. To reproduce that example, run:
 
 ```
-uv run traceflow examples 1.0.0 test.pdf --playwright-dir playwright/
+uv run traceflow examples 1.0.0 test.pdf
 ```
 
-On macOS you may need to prefix the command with `DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib` so the bundled `cairosvg` finds `libcairo`. This example writes `test.pdf` into the current directory, stores temporary LaTeX artifacts in `report/`, and captures the Playwright video and logs via `playwright/run-test-video.sh`.
-
-If your documentation contains `autoplaywright` test blocks that capture Playwright runs, append `--playwright-dir PATH` so TraceFlow can invoke the runner and gather the videos + logs that back these tests.
+On macOS you may need to prefix the command with `DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib` so the bundled `cairosvg` finds `libcairo`. This example writes `test.pdf` into the current directory and stores temporary LaTeX artifacts in `report/`.
 
 ### Requirements
 ```
@@ -117,6 +114,7 @@ The platform must support importing MRI datasets in DICOM format.
 ### Example flow chart (using mermaid)
 
 \```mermaid
+%% caption: Example analysis pipeline
 graph LR
 A[Preprocessing] --> B[Segmentation]
 B --> C[Feature extraction]
