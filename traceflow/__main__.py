@@ -1,5 +1,5 @@
 import os
-from typing import Annotated, Optional
+from typing import Annotated, Optional, Literal
 
 from cyclopts import App, Parameter
 
@@ -15,6 +15,13 @@ def _run(
     directory: str,
     version: str,
     output: str,
+    render_mode: Annotated[
+        Literal["all", "requirements-tests-risks", "risks-only"],
+        Parameter(
+            name="--render-mode",
+            help="Rendering mode: all sections, requirements/tests/risks only, or risks only.",
+        ),
+    ] = "all",
     test_results_dir: Annotated[
         Optional[str],
         Parameter(
@@ -36,6 +43,48 @@ def _run(
             help="Path to the top-right logo (footer).",
         ),
     ] = None,
+    report_title: Annotated[
+        Optional[str],
+        Parameter(
+            name="--report-title",
+            help="Optional title displayed on the report title page.",
+        ),
+    ] = None,
+    document_code: Annotated[
+        Optional[str],
+        Parameter(
+            name="--document-code",
+            help="Optional document code shown in the report (for example MCD-1CL-019).",
+        ),
+    ] = None,
+    document_type: Annotated[
+        Optional[str],
+        Parameter(
+            name="--document-type",
+            help="Optional document type shown in the report metadata table.",
+        ),
+    ] = None,
+    skip_toc: Annotated[
+        bool,
+        Parameter(
+            name="--skip-toc",
+            help="Skip rendering the table of contents.",
+        ),
+    ] = False,
+    cover_signature_boxes: Annotated[
+        bool,
+        Parameter(
+            name="--cover-signature-boxes",
+            help="Use boxed signature placeholders on the cover page.",
+        ),
+    ] = False,
+    traceability_a3: Annotated[
+        bool,
+        Parameter(
+            name="--traceability-a3",
+            help="Render traceability-matrix pages using A3 landscape layout.",
+        ),
+    ] = False,
     individual_pdfs: Annotated[
         bool,
         Parameter(
@@ -51,7 +100,33 @@ def _run(
         top_left_logo_path=top_left_logo,
         top_right_logo_path=top_right_logo,
     )
-    output_file: bytes = report.render()
+    include_design = True
+    include_supplementary = True
+    include_requirements = True
+    include_tests = True
+    include_risks = True
+    if render_mode == "requirements-tests-risks":
+        include_design = False
+        include_supplementary = False
+    elif render_mode == "risks-only":
+        include_design = False
+        include_supplementary = False
+        include_requirements = False
+        include_tests = False
+
+    output_file: bytes = report.render(
+        include_design=include_design,
+        include_supplementary=include_supplementary,
+        include_risks=include_risks,
+        include_requirements=include_requirements,
+        include_tests=include_tests,
+        report_title=report_title,
+        include_toc=not skip_toc,
+        cover_signature_boxes=cover_signature_boxes,
+        document_code=document_code,
+        document_type=document_type,
+        traceability_a3=traceability_a3,
+    )
     with open(output, "wb") as f:
         f.write(output_file)
 

@@ -76,6 +76,8 @@
 \newcommand{\traceflowtoprightlogo}{\VAR{top_right_logo}}
 \newcommand{\traceflowstandardlogowidth}{4.0cm}
 \newcommand{\traceflowwidelogowidth}{6.0cm}
+\newcommand{\traceflowdocumentcode}{\VAR{document_code}}
+\newcommand{\traceflowdocumenttype}{\VAR{document_type}}
 \hypersetup{
   colorlinks=true,
   linkcolor=darkblue,
@@ -122,7 +124,7 @@
 \fancyhead[R]{\includegraphics[width=\traceflowstandardlogowidth,keepaspectratio]{\traceflowtoprightlogo}}
 \fancyhfoffset[L]{0pt}
 \fancyhfoffset[R]{0pt}
-\fancyfoot[L]{\footnotesize Report produced using TraceFlow \VAR{version}}
+\fancyfoot[L]{\footnotesize \traceflowdocumentcode{} | Report produced using TraceFlow \VAR{version}}
 \fancyfoot[R]{\footnotesize Page \thepage\ of \pageref{LastPage}}
 \renewcommand{\headrulewidth}{0.3pt}
 \renewcommand{\footrulewidth}{0pt}
@@ -136,7 +138,54 @@
 \end{center}
 \vspace{0.3cm}
 
+\begin{tabularx}{\textwidth}{|X|X|}
+\hline
+\rowcolor{lightgray}
+\textbf{Document ID} & \textbf{Document Type} \\
+\hline
+\traceflowdocumentcode{} & \traceflowdocumenttype{} \\
+\hline
+\end{tabularx}
+\vspace{0.3cm}
+
 \BLOCK{ if include_cover_page }
+\BLOCK{ if cover_signature_boxes }
+\begin{table}[H]
+\renewcommand{\arraystretch}{1.35}
+\arrayrulecolor{gray} % Set the color of the horizontal and vertical lines to gray
+\begin{tabular}{|>{\columncolor{gray!30}}m{0.45\linewidth}|m{0.45\linewidth}|}
+\hline
+\textbf{Version under test} & \\
+\hline
+\textbf{Engineer} & \\
+\hline
+\textbf{Tester} & \\
+\hline
+\textbf{Test Date} & \\
+\hline
+\textbf{Initial Report Generation Date} & \today \\
+\hline
+\textbf{Result} & \\
+\hline
+\textbf{Approved Usage} \vspace*{1\baselineskip} & \\
+\hline
+\end{tabular}
+\end{table}
+
+\vspace{0.4cm}
+
+\begin{minipage}{0.45\textwidth}
+\centering
+\fbox{\begin{minipage}[c][4.8cm][c]{0.92\linewidth}\mbox{}\end{minipage}}\\[0.6em]
+\textbf{Lead Software Engineer}
+\end{minipage}
+\hfill
+\begin{minipage}{0.45\textwidth}
+\centering
+\fbox{\begin{minipage}[c][4.8cm][c]{0.92\linewidth}\mbox{}\end{minipage}}\\[0.6em]
+\textbf{Head of Core Lab}
+\end{minipage}
+\BLOCK{ else }
 \begin{table}[H]
 \renewcommand{\arraystretch}{1.35}
 \arrayrulecolor{gray} % Set the color of the horizontal and vertical lines to gray
@@ -198,8 +247,12 @@
 \noindent Date
 \end{minipage}
 \BLOCK{ endif }
+\BLOCK{ endif }
 
-
+\BLOCK{ if include_cover_page or include_toc }
 \newpage
+\BLOCK{ endif }
+\BLOCK{ if include_toc }
 \tableofcontents
 \newpage
+\BLOCK{ endif }

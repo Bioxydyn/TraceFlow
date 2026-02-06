@@ -1004,7 +1004,7 @@ wheels = [
 
 [[package]]
 name = "traceflow-rtm"
-version = "0.0.25"
+version = "0.0.28"
 source = { editable = "." }
 dependencies = [
     { name = "cairosvg" },

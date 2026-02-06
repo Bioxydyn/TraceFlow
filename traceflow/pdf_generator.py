@@ -178,6 +178,47 @@ class PdfReport():
             return f"\\cellcolor{{{colour}}}{cell_text}"
         return cell_text
 
+    @staticmethod
+    def _begin_a3_landscape_block(*, clearpage: bool = True) -> list[str]:
+        lines: list[str] = []
+        if clearpage:
+            lines.append("\\clearpage")
+        lines.extend(
+            [
+                "\\begingroup",
+                "\\setlength{\\paperwidth}{420mm}",
+                "\\setlength{\\paperheight}{297mm}",
+                "\\pdfpagewidth=420mm",
+                "\\pdfpageheight=297mm",
+                "\\special{papersize=420mm,297mm}",
+                "\\newgeometry{left=15mm,right=15mm,top=20mm,bottom=20mm}",
+                "\\setlength{\\textwidth}{390mm}",
+                "\\setlength{\\columnwidth}{\\textwidth}",
+                "\\setlength{\\linewidth}{\\textwidth}",
+                "\\setlength{\\hsize}{\\textwidth}",
+                "\\setlength{\\headwidth}{\\textwidth}",
+                "\\fancyhead[L]{\\includegraphics[width=\\traceflowwidelogowidth,keepaspectratio]{\\traceflowtopleftlogo}}",  # noqa E501
+                "\\fancyhead[R]{\\includegraphics[width=\\traceflowwidelogowidth,keepaspectratio]{\\traceflowtoprightlogo}}",  # noqa E501
+            ]
+        )
+        return lines
+
+    @staticmethod
+    def _end_a3_landscape_block() -> list[str]:
+        return [
+            "\\restoregeometry",
+            "\\setlength{\\headwidth}{\\textwidth}",
+            "\\fancyhead[L]{\\includegraphics[width=\\traceflowstandardlogowidth,keepaspectratio]{\\traceflowtopleftlogo}}",  # noqa E501
+            "\\fancyhead[R]{\\includegraphics[width=\\traceflowstandardlogowidth,keepaspectratio]{\\traceflowtoprightlogo}}",  # noqa E501
+            "\\setlength{\\paperwidth}{210mm}",
+            "\\setlength{\\paperheight}{297mm}",
+            "\\pdfpagewidth=210mm",
+            "\\pdfpageheight=297mm",
+            "\\special{papersize=210mm,297mm}",
+            "\\endgroup",
+            "\\clearpage",
+        ]
+
     def build_traceability_matrix(self, req_page: RequirementDocument, *, link_tests: bool = True) -> str:
         # Display the traceability matrix
         table = "\\subsection{Traceability Matrix}\n\n"
@@ -194,13 +235,15 @@ class PdfReport():
 
         # Split columns into chunks so that we don't exceed the maximum number of columns
         chunked_columns = []
-        max_columns = 17
+        max_columns = 30 if self.traceability_a3 else 17
         while len(columns) > 0:
             chunked_columns.append(columns[:max_columns])
             columns = columns[max_columns:]
 
         for chunk in chunked_columns:
-            if large_matrix:
+            if self.traceability_a3:
+                table += "\n".join(self._begin_a3_landscape_block(clearpage=True)) + "\n"
+            elif large_matrix:
                 # This is a large matrix. We put the table on its own page, and that page in landscape mode
                 table += "\\newpage\n"
                 table += "\\begin{landscape}\n"
@@ -210,9 +253,12 @@ class PdfReport():
             # otherwise it should be empty
             table += "\\begingroup\n"
             table += "\\rowcolors{2}{gray!25}{white}\n"
-            table += "\\begin{table}[h]\n"
+            table += "\\begin{table}[H]\n"
             table += "\\centering\n"
-            table += "\\begin{tabular}{@{}c@{}" + "@{}>{\\centering\\arraybackslash}m{1cm}@{}" * len(chunk) + "}\n"
+            column_width = "1.05cm" if self.traceability_a3 else "1cm"
+            table += (
+                "\\begin{tabular}{@{}c@{}" + f"@{{}}>{{\\centering\\arraybackslash}}m{{{column_width}}}@{{}}" * len(chunk) + "}\n"  # noqa E501
+            )
             table += "\\hline\n"
 
             # Header row with test ids
@@ -244,7 +290,9 @@ class PdfReport():
             table += "\\end{table}\n\n"
             table += "\\endgroup\n"
 
-            if large_matrix:
+            if self.traceability_a3:
+                table += "\n".join(self._end_a3_landscape_block()) + "\n"
+            elif large_matrix:
                 table += "\\end{landscape}\n"
                 table += "\\newpage\n"
 
@@ -280,29 +328,17 @@ class PdfReport():
         controls_width = 6.3
         residual_width = 5.5
 
-        table_lines = [
-            "\\clearpage",
-            "\\begingroup",
-            "\\setlength{\\paperwidth}{420mm}",
-            "\\setlength{\\paperheight}{297mm}",
-            "\\pdfpagewidth=420mm",
-            "\\pdfpageheight=297mm",
-            "\\special{papersize=420mm,297mm}",
-            "\\newgeometry{left=15mm,right=15mm,top=20mm,bottom=20mm}",
-            "\\setlength{\\textwidth}{390mm}",
-            "\\setlength{\\columnwidth}{\\textwidth}",
-            "\\setlength{\\linewidth}{\\textwidth}",
-            "\\setlength{\\hsize}{\\textwidth}",
-            "\\setlength{\\headwidth}{\\textwidth}",
-            "\\fancyhead[L]{\\includegraphics[width=\\traceflowwidelogowidth,keepaspectratio]{\\traceflowtopleftlogo}}",
-            "\\fancyhead[R]{\\includegraphics[width=\\traceflowwidelogowidth,keepaspectratio]{\\traceflowtoprightlogo}}",
-            "\\footnotesize",
-            "\\setlength\\tabcolsep{3pt}",
-            "\\renewcommand{\\arraystretch}{1.3}",
-            "\\setlength\\LTleft{0pt}",
-            "\\setlength\\LTright{0pt}",
-            f"\\begin{{longtable}}{{{column_spec}}}",
-        ]
+        table_lines = self._begin_a3_landscape_block(clearpage=True)
+        table_lines.extend(
+            [
+                "\\footnotesize",
+                "\\setlength\\tabcolsep{3pt}",
+                "\\renewcommand{\\arraystretch}{1.3}",
+                "\\setlength\\LTleft{0pt}",
+                "\\setlength\\LTright{0pt}",
+                f"\\begin{{longtable}}{{{column_spec}}}",
+            ]
+        )
 
         header_cells = [
             "\\textbf{Risk ID}",
@@ -376,23 +412,8 @@ class PdfReport():
                 row_ending = " \\\\"
             table_lines.append(" & ".join(row_cells) + row_ending)
 
-        table_lines.extend(
-            [
-                "\\bottomrule",
-                "\\end{longtable}",
-                "\\restoregeometry",
-                "\\setlength{\\headwidth}{\\textwidth}",
-                "\\fancyhead[L]{\\includegraphics[width=\\traceflowstandardlogowidth,keepaspectratio]{\\traceflowtopleftlogo}}",
-                "\\fancyhead[R]{\\includegraphics[width=\\traceflowstandardlogowidth,keepaspectratio]{\\traceflowtoprightlogo}}",
-                "\\setlength{\\paperwidth}{210mm}",
-                "\\setlength{\\paperheight}{297mm}",
-                "\\pdfpagewidth=210mm",
-                "\\pdfpageheight=297mm",
-                "\\special{papersize=210mm,297mm}",
-                "\\endgroup",
-                "\\clearpage",
-            ]
-        )
+        table_lines.extend(["\\bottomrule", "\\end{longtable}"])
+        table_lines.extend(self._end_a3_landscape_block())
         return "\n".join(table_lines)
 
     def render_risk_document(self, risk_page: RiskDocument) -> str:
@@ -895,6 +916,7 @@ class PdfReport():
                 raise FileNotFoundError(f"Test results directory does not exist: {resolved_test_results_dir}")
             self.test_results_dir = resolved_test_results_dir
         self.unique_ids = self._collect_unique_ids()
+        self.traceability_a3 = False
 
     @staticmethod
     def _logo_basename(path: Optional[str], default_name: str) -> str:
@@ -928,14 +950,21 @@ class PdfReport():
         include_tests: bool = True,
         report_title: Optional[str] = None,
         include_cover_page: bool = True,
+        include_toc: bool = True,
+        cover_signature_boxes: bool = False,
+        document_code: Optional[str] = None,
+        document_type: Optional[str] = None,
+        traceability_a3: bool = False,
     ) -> bytes:
         original_unique_ids = self.unique_ids
+        original_traceability_a3 = self.traceability_a3
         selected_unique_ids = self._collect_unique_ids(
             include_risks=include_risks,
             include_requirements=include_requirements,
             include_tests=include_tests,
         )
         self.unique_ids = selected_unique_ids
+        self.traceability_a3 = traceability_a3
         try:
             header = _latex_jinja2_env.from_string(
                 load_resource("traceflow.res", "report-header.tex").decode("utf-8")
@@ -945,6 +974,10 @@ class PdfReport():
             default_title = self.document.name + " " + self.document.version + ": Validation Pack"
             tex_vars["report_title"] = self.process_text(report_title or default_title)
             tex_vars["include_cover_page"] = include_cover_page
+            tex_vars["include_toc"] = include_toc
+            tex_vars["cover_signature_boxes"] = cover_signature_boxes
+            tex_vars["document_code"] = self.process_text(document_code or "N/A")
+            tex_vars["document_type"] = self.process_text(document_type or "TraceFlow Report")
             top_left_logo_name = PdfReport._logo_basename(self.top_left_logo_path, "traceflow-logo.png")
             top_right_logo_name = PdfReport._logo_basename(self.top_right_logo_path, "voxelflow-logo.png")
 
@@ -1070,6 +1103,7 @@ class PdfReport():
                     return out.read()
         finally:
             self.unique_ids = original_unique_ids
+            self.traceability_a3 = original_traceability_a3
 
     def _individual_report_specs(self) -> list[IndividualReportSpec]:
         specs: list[IndividualReportSpec] = []
