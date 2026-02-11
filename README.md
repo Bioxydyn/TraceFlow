@@ -63,6 +63,9 @@ Append `--individual-pdfs` to also emit per-section PDFs alongside the combined 
 `1corelab-validation-pack-requirements.pdf`, and `1corelab-validation-pack-tests.pdf` when those sections exist in your
 source documents.
 
+Append `--skip-front-page` to omit the cover-page `Version under test` table and both signature sections.
+This is useful when those fields are completed in another system.
+
 ### Running the example
 
 TraceFlow includes the `examples` directory with requirements, design, risks, and tests. To reproduce that example, run:

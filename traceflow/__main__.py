@@ -71,6 +71,13 @@ def _run(
             help="Skip rendering the table of contents.",
         ),
     ] = False,
+    skip_front_page: Annotated[
+        bool,
+        Parameter(
+            name="--skip-front-page",
+            help="Skip rendering the cover-page version/signature sections.",
+        ),
+    ] = False,
     cover_signature_boxes: Annotated[
         bool,
         Parameter(
@@ -121,6 +128,7 @@ def _run(
         include_requirements=include_requirements,
         include_tests=include_tests,
         report_title=report_title,
+        include_cover_page=not skip_front_page,
         include_toc=not skip_toc,
         cover_signature_boxes=cover_signature_boxes,
         document_code=document_code,
