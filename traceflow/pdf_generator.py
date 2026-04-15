@@ -310,9 +310,116 @@ class PdfReport():
         latex += "\n\n\\newpage\n\n"
         return latex
 
+    @classmethod
+    def _classify_risk_score(cls: type['PdfReport'], score: int) -> tuple[str, str]:
+        if score <= 0:
+            return "", ""
+        for threshold, label, colour in cls._RISK_LEVELS:
+            if score >= threshold:
+                return label, colour
+        return "", ""
+
+    @classmethod
+    def _risk_band_ranges(cls: type['PdfReport']) -> list[tuple[str, str, str]]:
+        levels = sorted(cls._RISK_LEVELS, key=lambda entry: entry[0])
+        ranges: list[tuple[str, str, str]] = []
+        for index, (threshold, label, colour) in enumerate(levels):
+            if index + 1 < len(levels):
+                upper = levels[index + 1][0] - 1
+                range_text = f"{threshold}--{upper}" if upper > threshold else f"{threshold}"
+            else:
+                range_text = f"{threshold}+"
+            ranges.append((label, range_text, colour))
+        return list(reversed(ranges))
+
+    def build_risk_scoring_matrix(self) -> str:
+        axis_labels: list[tuple[str, int]] = [
+            ("Low", 1),
+            ("Medium", 3),
+            ("High", 4),
+            ("Very High", 5),
+        ]
+
+        lines: list[str] = [
+            "\\subsection{Risk Scoring Method}",
+            "",
+            (
+                "Each risk is assessed on two dimensions, \\textbf{Severity} and \\textbf{Probability}. "
+                "Each dimension is scored on the scale below, and the overall risk rating is the product "
+                "of the two scores (Severity $\\times$ Probability)."
+            ),
+            "",
+            "\\begin{center}",
+            "\\begin{tabular}{lc}",
+            "\\toprule",
+            "\\textbf{Level} & \\textbf{Score} \\\\",
+            "\\midrule",
+            "Low / Minor / Rare / Unlikely & 1 \\\\",
+            "Medium / Moderate / Possible & 3 \\\\",
+            "High / Major / Frequent & 4 \\\\",
+            "Very High / Critical / Catastrophic & 5 \\\\",
+            "\\bottomrule",
+            "\\end{tabular}",
+            "\\end{center}",
+            "",
+            "The resulting product determines the overall risk band:",
+            "",
+            "\\begin{center}",
+            "\\begin{tabular}{lcl}",
+            "\\toprule",
+            "\\textbf{Band} & \\textbf{Score range} & \\textbf{Colour} \\\\",
+            "\\midrule",
+        ]
+        for label, range_text, colour in self._risk_band_ranges():
+            lines.append(
+                f"\\cellcolor{{{colour}}}{label} & {range_text} & \\cellcolor{{{colour}}}~ \\\\"
+            )
+        lines.extend([
+            "\\bottomrule",
+            "\\end{tabular}",
+            "\\end{center}",
+            "",
+            (
+                "The matrix below shows every combination of Severity and Probability, the resulting "
+                "score, and the band into which that score falls."
+            ),
+            "",
+            "\\begin{center}",
+            "\\renewcommand{\\arraystretch}{1.5}",
+            "\\setlength{\\tabcolsep}{6pt}",
+            "\\begin{tabular}{l|cccc}",
+            "\\toprule",
+            " & \\multicolumn{4}{c}{\\textbf{Probability}} \\\\",
+        ])
+        header_cells = " & ".join(f"{name} ({score})" for name, score in axis_labels)
+        lines.append(f"\\textbf{{Severity}} & {header_cells} \\\\")
+        lines.append("\\midrule")
+        for sev_name, sev_score in reversed(axis_labels):
+            row_cells: list[str] = [f"{sev_name} ({sev_score})"]
+            for prob_name, prob_score in axis_labels:
+                product = sev_score * prob_score
+                band_label, band_colour = self._classify_risk_score(product)
+                if band_colour:
+                    cell = f"\\cellcolor{{{band_colour}}}{product} ({band_label})"
+                else:
+                    cell = f"{product}"
+                row_cells.append(cell)
+            lines.append(" & ".join(row_cells) + " \\\\")
+        lines.extend([
+            "\\bottomrule",
+            "\\end{tabular}",
+            "\\end{center}",
+            "",
+            "\\subsection{Risk Register}",
+            "",
+        ])
+        return "\n".join(lines) + "\n"
+
     def build_risk_register(self, risk_page: RiskDocument) -> str:
         if not risk_page.items:
             return ""
+
+        preamble = self.build_risk_scoring_matrix()
 
         column_fragments = [
             "@{}p{4.0cm}",
@@ -414,7 +521,7 @@ class PdfReport():
 
         table_lines.extend(["\\bottomrule", "\\end{longtable}"])
         table_lines.extend(self._end_a3_landscape_block())
-        return "\n".join(table_lines)
+        return preamble + "\n".join(table_lines)
 
     def render_risk_document(self, risk_page: RiskDocument) -> str:
         label = self._build_label_from_text("risk", risk_page.title)
