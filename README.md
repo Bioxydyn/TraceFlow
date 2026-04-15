@@ -66,6 +66,15 @@ source documents.
 Append `--skip-front-page` to omit the cover-page `Version under test` table and both signature sections.
 This is useful when those fields are completed in another system.
 
+### Releasing a new version
+
+1. Bump `version` in `pyproject.toml` and `traceflow/version.py`, then run `uv lock`.
+2. Commit as `Release X.Y.Z`, tag `X.Y.Z`, and push the commit and tag to `master`.
+3. Build the distribution: `uv build`.
+4. Publish to PyPI using `uv publish` (the project's `TWINE_USERNAME`/`TWINE_PASSWORD` env vars work — `uv publish` accepts them as `--username`/`--password`):
+
+        uv publish --username "$TWINE_USERNAME" --password "$TWINE_PASSWORD" dist/traceflow_rtm-X.Y.Z*
+
 ### Running the example
 
 TraceFlow includes the `examples` directory with requirements, design, risks, and tests. To reproduce that example, run:
