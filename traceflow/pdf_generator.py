@@ -426,14 +426,16 @@ class PdfReport():
             "p{5.0cm}",
             "p{4.2cm}",
             "p{4.2cm}",
-            "p{4.2cm}",
+            "p{3.4cm}",
             "p{6.3cm}",
-            "p{5.5cm}",
+            "p{3.6cm}",
+            "p{4.7cm}",
             "@{}",
         ]
         column_spec = "".join(column_fragments)
         controls_width = 6.3
-        residual_width = 5.5
+        residual_width = 3.6
+        test_evidence_width = 4.7
 
         table_lines = self._begin_a3_landscape_block(clearpage=True)
         table_lines.extend(
@@ -455,6 +457,7 @@ class PdfReport():
             "\\textbf{Risk (Severity $\\times$ Probability)}",
             "\\textbf{Controls}",
             "\\textbf{Residual Risk}",
+            "\\textbf{Test Evidence}",
         ]
         header_row = " & ".join(header_cells) + " \\\\ \\midrule"
         table_lines.extend(
@@ -499,6 +502,9 @@ class PdfReport():
                 residual_lines.append(self.process_text(residual_risk_text))
             residual_content = " \\\\ ".join([line for line in residual_lines if line] or ["-"])
             residual_cell = f"\\parbox[t]{{{residual_width}cm}}{{{residual_content}}}"
+            test_evidence_text = self.process_text(risk.attributes.get("test_evidence", ""))
+            test_evidence_content = test_evidence_text if test_evidence_text else "-"
+            test_evidence_cell = f"\\parbox[t]{{{test_evidence_width}cm}}{{{test_evidence_content}}}"
             title_text = self.process_text(risk.title)
             id_text = self.process_text_impl(risk.risk_id, set())
             first_cell = (
@@ -513,6 +519,7 @@ class PdfReport():
                 risk_expression,
                 controls_section,
                 residual_cell,
+                test_evidence_cell,
             ]
             row_ending = " \\\\ \\midrule"
             if index == len(risk_page.items) - 1:

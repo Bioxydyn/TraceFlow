@@ -168,6 +168,7 @@ class RiskDocument(SubDocument[Risk]):
         "residual risk assessment": "residual_risk",
         "residual severity": "residual_severity",
         "residual probability": "residual_probability",
+        "test evidence": "test_evidence",
         "detection": "detection",
         "linked requirement": "linked_requirements",
         "linked requirements": "linked_requirements",
