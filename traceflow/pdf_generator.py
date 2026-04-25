@@ -156,6 +156,14 @@ class PdfReport():
     def process_text_impl(text: str, unique_ids: set[str]) -> str:
         text = PdfReport._normalise_unicode(text)
 
+        # Escape literal ``{`` and ``}`` in the original user prose BEFORE any of the
+        # substitutions below add their own (intentional, paired) braces. Subsequent
+        # ``\hyperref{...}`` and ``\texttt{...}`` insertions are emitted post-escape, so
+        # their braces survive. The trade-off is that a unique-ID surrounded by literal
+        # braces (e.g. ``{REQ-X}``) loses its hyperref — extremely rare in practice and
+        # preferable to a brace-mismatch crash inside pdflatex.
+        text = text.replace("{", r"\{").replace("}", r"\}")
+
         # Replace any instances of a unique ID within the text to a link to the ID.
         # 1. Explode text into words
         words = text.split()

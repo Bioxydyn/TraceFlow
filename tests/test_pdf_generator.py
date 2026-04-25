@@ -80,6 +80,19 @@ class TestPdfGenerator(unittest.TestCase):
         )
         self.assertEqual(latex, expected)
 
+    def test_process_text_escapes_user_prose_braces(self) -> None:
+        # User prose with literal { } (e.g. JSON-shaped sample values, like a DICOM
+        # config string {sample: true}) must compile under pdflatex without brace
+        # mismatch. ID hyperrefing should still work in the same string.
+        latex = PdfReport.process_text_impl(
+            "config={ sample: true } REQ-X here", {"REQ-X"}
+        )
+        self.assertIn(r"\{", latex)
+        self.assertIn(r"\}", latex)
+        self.assertIn(r"\hyperref[REQ-X]{\textbf{REQ-X}}", latex)
+        # Make sure we didn't accidentally escape the braces inside our own command:
+        self.assertIn(r"\textbf{REQ-X}", latex)
+
     def test_process_text_escapes_latex_special_chars(self) -> None:
         # ^, ~, %, #, $ are LaTeX special chars that frequently appear in user prose
         # (e.g. DICOM PatientName "LAST^FIRST", percentages, comments referencing #issue).
