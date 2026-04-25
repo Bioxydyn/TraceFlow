@@ -190,7 +190,22 @@ class PdfReport():
         # Replace the text wrapped in backticks with LaTeX inline code
         new_text = re.sub(inline_code_pattern, r'\\texttt{\1}', new_text)
 
-        return new_text.replace(r"&", r"\&").replace(r"_", r"\_")
+        # Escape LaTeX special characters that survive in raw user prose. We deliberately
+        # do NOT escape ``\``, ``{``, ``}`` here because the substitutions above
+        # (``\hyperref{...}`` and ``\texttt{...}``) intentionally emit those — escaping
+        # them would mangle the commands. The chars below never appear in our generated
+        # LaTeX commands, so it is safe to escape them globally.
+        new_text = (
+            new_text.replace(r"&", r"\&")
+            .replace(r"_", r"\_")
+            .replace(r"%", r"\%")
+            .replace(r"#", r"\#")
+            .replace(r"$", r"\$")
+            .replace(r"^", r"\^{}")
+            .replace(r"~", r"\~{}")
+        )
+
+        return new_text
 
     def process_text(self, text: str) -> str:
         return self.process_text_impl(text, self.unique_ids)

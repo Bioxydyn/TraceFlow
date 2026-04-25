@@ -80,6 +80,20 @@ class TestPdfGenerator(unittest.TestCase):
         )
         self.assertEqual(latex, expected)
 
+    def test_process_text_escapes_latex_special_chars(self) -> None:
+        # ^, ~, %, #, $ are LaTeX special chars that frequently appear in user prose
+        # (e.g. DICOM PatientName "LAST^FIRST", percentages, comments referencing #issue).
+        latex = PdfReport.process_text_impl("LAST^FIRST 50% off ~50 #x $1", set())
+        self.assertIn(r"\^{}", latex)
+        self.assertIn(r"\%", latex)
+        self.assertIn(r"\~{}", latex)
+        self.assertIn(r"\#", latex)
+        self.assertIn(r"\$", latex)
+        # Existing escapes still apply
+        latex = PdfReport.process_text_impl("a_b & c", set())
+        self.assertIn(r"\_", latex)
+        self.assertIn(r"\&", latex)
+
     def test_process_text_normalises_unicode_arrows_and_comparators(self) -> None:
         text = "a -> b => c <= d ≤ e ≥ f ≈ g – h … i • j"
         latex = PdfReport.process_text_impl(text, set())
