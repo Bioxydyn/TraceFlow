@@ -118,8 +118,43 @@ class PdfReport():
         (1, "Low", "green!35"),
     ]
 
+    # Common Unicode characters that appear in human-written prose but are not in the
+    # default LaTeX font encoding (T1) — translate to safe ASCII equivalents so the
+    # PDF compile does not fail on input authored in a UTF-8 editor. Anything not on
+    # this list still flows through to LaTeX unchanged.
+    _UNICODE_LATEX_REPLACEMENTS: dict[str, str] = {
+        "→": "->",     # → right arrow
+        "←": "<-",     # ← left arrow
+        "⇒": "=>",     # ⇒ rightwards double arrow
+        "⇐": "<=",     # ⇐ leftwards double arrow
+        "↔": "<->",    # ↔ left-right arrow
+        "≤": r"\(\leq\)",   # ≤
+        "≥": r"\(\geq\)",   # ≥
+        "≠": r"\(\neq\)",   # ≠
+        "≈": r"\(\approx\)",  # ≈
+        "±": r"\(\pm\)",    # ±
+        "×": r"\(\times\)", # ×
+        "÷": r"\(\div\)",   # ÷
+        "…": r"\dots ",     # …
+        "•": r"\textbullet ",  # •
+        "–": "--",     # – en dash
+        "—": "---",    # — em dash
+        "‘": "`",      # ‘
+        "’": "'",      # ’
+        "“": "``",     # “
+        "”": "''",     # ”
+    }
+
+    @classmethod
+    def _normalise_unicode(cls, text: str) -> str:
+        for src, dst in cls._UNICODE_LATEX_REPLACEMENTS.items():
+            if src in text:
+                text = text.replace(src, dst)
+        return text
+
     @staticmethod
     def process_text_impl(text: str, unique_ids: set[str]) -> str:
+        text = PdfReport._normalise_unicode(text)
 
         # Replace any instances of a unique ID within the text to a link to the ID.
         # 1. Explode text into words

@@ -80,6 +80,21 @@ class TestPdfGenerator(unittest.TestCase):
         )
         self.assertEqual(latex, expected)
 
+    def test_process_text_normalises_unicode_arrows_and_comparators(self) -> None:
+        text = "a -> b => c <= d ≤ e ≥ f ≈ g – h … i • j"
+        latex = PdfReport.process_text_impl(text, set())
+        # ASCII forms of '->', '=>', '<=' pass through unchanged; the math chars and
+        # typography are replaced with LaTeX-safe equivalents.
+        self.assertIn("a -> b", latex)
+        self.assertIn(r"\(\leq\)", latex)
+        self.assertIn(r"\(\geq\)", latex)
+        self.assertIn(r"\(\approx\)", latex)
+        self.assertIn(r"\dots", latex)
+        self.assertIn(r"\textbullet", latex)
+        # No raw unicode chars remain
+        for ch in ("→", "⇒", "≤", "≥", "≈", "…", "•", "–"):
+            self.assertNotIn(ch, latex, f"raw unicode {ch!r} leaked through")
+
     def test_evaluate_risk_rating(self) -> None:
         label, score, colour = PdfReport._evaluate_risk_rating("High", "Medium")
         self.assertEqual(label, "High")
