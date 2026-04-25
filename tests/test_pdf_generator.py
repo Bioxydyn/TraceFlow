@@ -1,6 +1,10 @@
+import io
+import json
 import os
+import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from typing import Optional
 
@@ -14,6 +18,8 @@ from traceflow.parser import (
     RiskDocument,
     Test,
     TestDocument,
+    extract_autotest_result,
+    parse_markdown,
 )
 
 
@@ -209,3 +215,166 @@ class TestPdfGenerator(unittest.TestCase):
                     self.assertIn(r"Status: \textbf{\textcolor{green!50!black}{Passed}}", latex)
                 finally:
                     os.chdir(cwd)
+
+    def _render_autotest(self, test_id: str, body: str) -> tuple[str, str]:
+        """Helper: render a synthetic result.md and return (latex, stderr)."""
+        with tempfile.TemporaryDirectory() as results_dir:
+            test_folder = Path(results_dir) / test_id
+            test_folder.mkdir(parents=True, exist_ok=True)
+            (test_folder / "result.md").write_text(body)
+            report = PdfReport(self._build_document(), test_results_dir=results_dir)
+            with tempfile.TemporaryDirectory() as workdir:
+                cwd = os.getcwd()
+                os.chdir(workdir)
+                try:
+                    err = io.StringIO()
+                    with redirect_stderr(err):
+                        latex = report._render_autotest_result(test_id)
+                    return latex, err.getvalue()
+                finally:
+                    os.chdir(cwd)
+
+    def test_extract_autotest_result_separates_description_and_assertions(self) -> None:
+        body = "\n".join(
+            [
+                "# TEST-EXT-001",
+                "",
+                "- Kind: `test`",
+                "- Description: A user can sign in.",
+                "",
+                "## Assertions",
+                "",
+                "- (REQ-001) Login button enabled",
+                "",
+                "## Output",
+                "",
+                "no output",
+                "",
+            ]
+        )
+        result = extract_autotest_result(parse_markdown(body), test_id="TEST-EXT-001")
+        self.assertEqual(result.description, "A user can sign in.")
+        self.assertEqual(result.missing_fields, [])
+        self.assertEqual(len(result.assertions_items), 1)
+        self.assertEqual(len(result.metadata_items), 1)
+
+    def test_autotest_renders_description_and_assertions_blocks(self) -> None:
+        body = "\n".join(
+            [
+                "# TEST-DESC-001",
+                "",
+                "- Kind: `test`",
+                "- Status: `passed`",
+                "- Description: An admin can disable an active user account.",
+                "",
+                "## Assertions",
+                "",
+                "- (REQ-001) Disable button is enabled",
+                "- (REQ-001) Status changes to `Disabled`",
+                "",
+            ]
+        )
+        latex, _ = self._render_autotest("TEST-DESC-001", body)
+        self.assertIn(r"\subsubsection*{Description}", latex)
+        self.assertIn("An admin can disable an active user account.", latex)
+        self.assertIn(r"\subsubsection*{Assertions}", latex)
+        self.assertIn("Disable button is enabled", latex)
+
+    def test_autotest_emits_missing_field_warning_when_description_absent(self) -> None:
+        body = "\n".join(
+            [
+                "# TEST-MISS-001",
+                "",
+                "- Kind: `test`",
+                "",
+                "## Assertions",
+                "",
+                "- (REQ-001) Something",
+                "",
+            ]
+        )
+        latex, stderr = self._render_autotest("TEST-MISS-001", body)
+        self.assertIn(r"\textcolor{red!75!black}{\textbf{Validation gap", latex)
+        self.assertIn("description", latex)
+        self.assertNotIn("assertions", latex.split("Validation gap")[1].split("}}")[0])
+        self.assertIn("missing required fields: description", stderr)
+
+    def test_autotest_emits_warning_when_assertions_absent(self) -> None:
+        body = "\n".join(
+            [
+                "# TEST-MISS-002",
+                "",
+                "- Kind: `test`",
+                "- Description: Something happens.",
+                "",
+            ]
+        )
+        latex, stderr = self._render_autotest("TEST-MISS-002", body)
+        self.assertIn("Validation gap", latex)
+        self.assertIn("assertions", latex.split("Validation gap")[1])
+        self.assertIn("missing required fields: assertions", stderr)
+
+    def test_handle_image_uses_sidecar_caption_over_filename_alt(self) -> None:
+        with tempfile.TemporaryDirectory() as results_dir:
+            test_id = "TEST-CAP-001"
+            test_folder = Path(results_dir) / test_id
+            screenshots = test_folder / "screenshots"
+            screenshots.mkdir(parents=True, exist_ok=True)
+            (screenshots / "screenshot-001.png").write_bytes(b"fake")
+            (screenshots / "screenshot-001.json").write_text(
+                json.dumps(
+                    {
+                        "caption": "Login page renders for guest user",
+                        "requirementId": "REQ-001",
+                        "assertionSource": "await expect(page).toHaveURL(/login/)",
+                    }
+                )
+            )
+            (test_folder / "result.md").write_text(
+                "\n".join(
+                    [
+                        f"# {test_id}",
+                        "",
+                        "- Description: Login page renders.",
+                        "",
+                        "## Assertions",
+                        "",
+                        "- (REQ-001) URL is /login",
+                        "",
+                        "## Screenshots",
+                        "",
+                        "![screenshot-001.png](screenshots/screenshot-001.png)",
+                        "",
+                    ]
+                )
+            )
+            report = PdfReport(self._build_document(), test_results_dir=results_dir)
+            with tempfile.TemporaryDirectory() as workdir:
+                cwd = os.getcwd()
+                os.chdir(workdir)
+                try:
+                    latex = report._render_autotest_result(test_id)
+                finally:
+                    os.chdir(cwd)
+        self.assertIn("Login page renders for guest user", latex)
+        # Filename alt text should NOT be used as the caption
+        self.assertNotIn(r"\caption{screenshot-001.png}", latex)
+        # Hyperlinked requirement id must appear inside the caption
+        self.assertIn(r"\hyperref[REQ-001]{\textbf{REQ-001}}", latex)
+        # Assertion source must appear in monospace below the figure
+        self.assertIn(r"await expect(page).toHaveURL", latex)
+
+    def test_handle_image_falls_back_to_caption_missing_marker(self) -> None:
+        report = PdfReport(self._build_document())
+        # Image with no alt and no sidecar
+        latex = report.md_to_latex(
+            [
+                {
+                    "type": "image",
+                    "src": "report/img.png",
+                    "alt": "",
+                    "title": "",
+                }
+            ]
+        )
+        self.assertIn("[Caption missing]", latex)

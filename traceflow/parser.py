@@ -1,6 +1,6 @@
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Union, List, Generic, TypeVar, Callable, Type
 
@@ -14,6 +14,24 @@ class Requirement:
     content: list[dict]
     title: str
     test_ids: list[str]
+
+
+@dataclass
+class AutotestResult:
+    """Structured view of a per-test ``result.md`` file.
+
+    The collector emits a metadata bullet list (``- Description: ...`` etc.) plus optional
+    ``## Assertions``, ``## Screenshots``, and ``## Output`` sections. This dataclass holds the
+    extracted parts so the PDF generator can render them as labelled blocks rather than a
+    flat bullet list.
+    """
+
+    test_id: str
+    description: str
+    assertions_items: list[dict] = field(default_factory=list)
+    metadata_items: list[dict] = field(default_factory=list)
+    other_items: list[dict] = field(default_factory=list)
+    missing_fields: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -429,3 +447,100 @@ def extract_title(parsed_content: list[dict]) -> str:
     if is_ast_element_heading(parsed_content[0]) != 1:
         raise ValueError("First element in file is not L1 heading")
     return get_heading_text(parsed_content[0])
+
+
+def _flatten_inline_text(node: dict) -> str:
+    """Walk an inline AST node and join all text/codespan children, ignoring formatting."""
+    if node.get("type") == "text":
+        return node.get("text", "")
+    if node.get("type") == "codespan":
+        return node.get("text", "")
+    if node.get("type") in {"softbreak", "linebreak"}:
+        return "\n"
+    text = ""
+    for child in node.get("children", []):
+        text += _flatten_inline_text(child)
+    return text
+
+
+def _split_metadata_bullet(list_item: dict) -> tuple[str, str] | None:
+    """Return ``(label, value)`` for a ``- Label: value`` bullet, else ``None``.
+
+    Recognised label-bearing children are the ``block_text`` direct child of a ``list_item``
+    whose first text child looks like ``"Label: ..."``.
+    """
+    children = list_item.get("children", [])
+    if not children:
+        return None
+    block_text = children[0]
+    if block_text.get("type") != "block_text":
+        return None
+    inline_children = block_text.get("children", [])
+    flat = "".join(_flatten_inline_text(child) for child in inline_children).strip()
+    if ":" not in flat:
+        return None
+    label, _, value = flat.partition(":")
+    label = label.strip()
+    if not label or len(label) > 30:
+        return None
+    return label, value.strip()
+
+
+def extract_autotest_result(parsed_content: list[dict], *, test_id: str) -> AutotestResult:
+    """Pick out the Description / Assertions blocks from a parsed ``result.md`` AST.
+
+    Returns the description text, the AST items that make up the ``## Assertions`` section,
+    the original metadata bullet list (with Description removed), and a list of fields the
+    generator should warn about (``"description"``, ``"assertions"``).
+    """
+    description = ""
+    assertions_items: list[dict] = []
+    other_items: list[dict] = []
+    metadata_items: list[dict] = []
+
+    consume_assertions = False
+    for elem in parsed_content:
+        if is_ast_element_heading(elem) == 1:
+            # Skip the H1 (test ID heading) — caller renders it separately.
+            consume_assertions = False
+            continue
+        if elem.get("type") == "heading" and elem.get("level") == 2:
+            heading_text = get_heading_text(elem).strip().lower().rstrip(":")
+            if heading_text == "assertions":
+                consume_assertions = True
+                continue
+            consume_assertions = False
+            other_items.append(elem)
+            continue
+        if consume_assertions:
+            assertions_items.append(elem)
+            continue
+        if elem.get("type") == "list" and not metadata_items:
+            new_children: list[dict] = []
+            for list_item in elem.get("children", []):
+                bullet = _split_metadata_bullet(list_item)
+                if bullet and bullet[0].lower() == "description":
+                    description = bullet[1]
+                    continue
+                new_children.append(list_item)
+            if new_children:
+                surviving_list = dict(elem)
+                surviving_list["children"] = new_children
+                metadata_items.append(surviving_list)
+            continue
+        other_items.append(elem)
+
+    missing_fields: list[str] = []
+    if not description:
+        missing_fields.append("description")
+    if not assertions_items:
+        missing_fields.append("assertions")
+
+    return AutotestResult(
+        test_id=test_id,
+        description=description,
+        assertions_items=assertions_items,
+        metadata_items=metadata_items,
+        other_items=other_items,
+        missing_fields=missing_fields,
+    )

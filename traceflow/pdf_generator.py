@@ -1,5 +1,7 @@
+import json
 import os
 import subprocess  # noqa S404
+import sys
 import tempfile
 from contextlib import contextmanager
 import shutil
@@ -24,11 +26,31 @@ from traceflow.parser import (
     MarkdownDocument,
     RequirementDocument,
     RiskDocument,
+    extract_autotest_result,
     parse_markdown,
 )
 from traceflow.version import __version__
 
 _latex_jinja2_env = latex.jinja2.make_env()
+
+
+_LATEX_TEXT_ESCAPES = {
+    "\\": r"\textbackslash{}",
+    "&": r"\&",
+    "%": r"\%",
+    "$": r"\$",
+    "#": r"\#",
+    "_": r"\_",
+    "{": r"\{",
+    "}": r"\}",
+    "~": r"\textasciitilde{}",
+    "^": r"\textasciicircum{}",
+}
+
+
+def _escape_latex_verbatim(text: str) -> str:
+    """Escape LaTeX special chars for safe inclusion in \\texttt{} or text mode."""
+    return "".join(_LATEX_TEXT_ESCAPES.get(ch, ch) for ch in text)
 
 
 class IndividualReportSpec(NamedTuple):
@@ -579,14 +601,40 @@ class PdfReport():
 
         def handle_image(item: dict) -> str:
             url = item["src"]
-            alt_text = self.process_text(item.get("alt", ""))
+            sidecar = item.get("_sidecar") or {}
+            alt_text_raw = item.get("alt", "")
+            caption_raw = sidecar.get("caption") or ""
+            if not caption_raw.strip():
+                # Fall back to alt text, but skip filename-shaped alts (e.g. "screenshot-001.png")
+                # which look like a caption to LaTeX but tell the reader nothing.
+                if alt_text_raw and not re.fullmatch(r"[A-Za-z0-9._-]+\.(png|jpg|jpeg|gif|svg|pdf)", alt_text_raw.strip(), re.IGNORECASE):
+                    caption_raw = alt_text_raw
+
+            assertion_source = (sidecar.get("assertionSource") or "").strip()
+            requirement_id = (sidecar.get("requirementId") or "").strip()
+            caption_parts: list[str] = []
+            if caption_raw.strip():
+                caption_parts.append(self.process_text(caption_raw.strip()))
+            if requirement_id:
+                caption_parts.append(
+                    f"\\textit{{(evidence for {self.process_text(requirement_id)})}}"
+                )
+            if not caption_parts:
+                caption_parts.append(r"\textcolor{red!75!black}{\textbf{[Caption missing]}}")
+
             latex = [
                 '\n\\begin{figure}[H]',
                 '\n\\centering',
-                f'\n\\includegraphics[width=0.5\\textwidth]{{{url}}}',
+                f'\n\\includegraphics[width=0.7\\textwidth]{{{url}}}',
+                "\n\\caption{" + " ".join(caption_parts) + "}",
             ]
-            if alt_text.strip():
-                latex.append(f'\n\\caption{{{alt_text}}}')
+            if assertion_source:
+                truncated = assertion_source if len(assertion_source) <= 200 else assertion_source[:197] + "..."
+                latex.append(
+                    "\n\\par\\noindent\\small\\texttt{"
+                    + _escape_latex_verbatim(truncated)
+                    + "}\\normalsize"
+                )
             latex.append('\n\\end{figure}')
             return ''.join(latex)
 
@@ -882,6 +930,34 @@ class PdfReport():
         return items
 
     @staticmethod
+    def _attach_image_sidecar_metadata(items: list[dict], staged_dir: str) -> list[dict]:
+        """Decorate every staged image node with a ``_sidecar`` dict if a JSON sidecar exists.
+
+        For ``staged_dir/screenshots/screenshot-001.png`` the loader looks for
+        ``staged_dir/screenshots/screenshot-001.json``. Sidecar fields are merged untouched.
+        """
+        for item in items:
+            for node in PdfReport._iter_ast_nodes(item):
+                if node.get("type") != "image":
+                    continue
+                src = node.get("src", "")
+                if not src or PdfReport._is_external_reference(src):
+                    continue
+                # ``src`` here is already prefixed with ``autotest-results/<staged_name>/...``
+                # (see ``_prefix_image_sources``). The sidecar lives next to the image on
+                # disk in the original ``staged_dir``.
+                relative_inside_staged = src.split(staged_dir.replace("\\", "/").rstrip("/") + "/", 1)[-1]
+                sidecar_path = os.path.join(staged_dir, os.path.splitext(relative_inside_staged)[0] + ".json")
+                if not os.path.isfile(sidecar_path):
+                    continue
+                try:
+                    with open(sidecar_path, "r", encoding="utf-8") as handle:
+                        node["_sidecar"] = json.load(handle)
+                except (OSError, json.JSONDecodeError):
+                    continue
+        return items
+
+    @staticmethod
     def _normalise_autotest_headings(items: list[dict]) -> list[dict]:
         for item in items:
             if item.get("type") == "heading":
@@ -975,10 +1051,48 @@ class PdfReport():
             result_markdown = result_handle.read()
 
         parsed_result = parse_markdown(result_markdown)
-        parsed_result = self._normalise_autotest_headings(parsed_result)
-        parsed_result = self._style_autotest_statuses(parsed_result)
-        parsed_result = self._prefix_image_sources(parsed_result, f"{staged_root}/{staged_name}")
-        return self.md_to_latex(parsed_result)
+        autotest = extract_autotest_result(parsed_result, test_id=test_id)
+
+        # Build the visible "Description" and "Assertions" blocks ahead of the raw bullets so a
+        # reviewer reads intent before metadata. ``autotest.other_items`` keeps any sections
+        # other than ``## Assertions`` (e.g. ``## Output``, ``## Screenshots``) in their original
+        # order.
+        ordered_items: list[dict] = []
+        if autotest.metadata_items:
+            ordered_items.extend(self._style_autotest_statuses(autotest.metadata_items))
+        ordered_items.extend(self._normalise_autotest_headings(autotest.other_items))
+        ordered_items = self._prefix_image_sources(ordered_items, f"{staged_root}/{staged_name}")
+        ordered_items = self._attach_image_sidecar_metadata(ordered_items, staged_dir)
+
+        latex_fragments: list[str] = []
+        if autotest.missing_fields:
+            joined = ", ".join(autotest.missing_fields)
+            sys.stderr.write(
+                f"WARNING: autotest `{test_id}` is missing required fields: {joined}\n"
+            )
+            latex_fragments.append(
+                "\n\\par\\noindent\\textcolor{red!75!black}{\\textbf{"
+                + f"Validation gap: this test is missing {joined}. "
+                + "Update the test source so reviewers see what was asserted."
+                + "}}\n"
+            )
+
+        if autotest.description:
+            latex_fragments.append(
+                "\n\\subsubsection*{Description}\n"
+                + self.process_text(autotest.description)
+                + "\n"
+            )
+
+        if autotest.assertions_items:
+            normalised_assertions = self._normalise_autotest_headings(
+                [dict(item) for item in autotest.assertions_items]
+            )
+            latex_fragments.append("\n\\subsubsection*{Assertions}\n")
+            latex_fragments.append(self.md_to_latex(normalised_assertions))
+
+        latex_fragments.append(self.md_to_latex(ordered_items))
+        return "\n".join(fragment for fragment in latex_fragments if fragment)
 
     @staticmethod
     def get_global_tex_vars() -> dict[str, str]:
