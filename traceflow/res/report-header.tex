@@ -159,15 +159,17 @@
 \hline
 \textbf{Engineer} & \\
 \hline
+\BLOCK{ if not cover_no_tester }
 \textbf{Tester} & \\
 \hline
-\textbf{Test Date} & \\
+\BLOCK{ endif }
+\textbf{Test Date} & \VAR{cover_test_date} \\
 \hline
 \textbf{Initial Report Generation Date} & \today \\
 \hline
-\textbf{Result} & \\
+\textbf{Result} & \VAR{cover_result} \\
 \hline
-\textbf{Approved Usage} \vspace*{1\baselineskip} & \\
+\textbf{Approved Usage} \vspace*{1\baselineskip} & \VAR{cover_approved_usage} \\
 \hline
 \end{tabular}
 \end{table}
@@ -195,15 +197,17 @@
 \hline
 \textbf{Engineer} & \\
 \hline
+\BLOCK{ if not cover_no_tester }
 \textbf{Tester} & \\
 \hline
-\textbf{Test Date} & \\
+\BLOCK{ endif }
+\textbf{Test Date} & \VAR{cover_test_date} \\
 \hline
 \textbf{Initial Report Generation Date} & \today \\
 \hline
-\textbf{Result} & \\
+\textbf{Result} & \VAR{cover_result} \\
 \hline
-\textbf{Approved Usage} \vspace*{1\baselineskip} & \\
+\textbf{Approved Usage} \vspace*{1\baselineskip} & \VAR{cover_approved_usage} \\
 \hline
 \end{tabular}
 \end{table}
@@ -211,6 +215,7 @@
 \vspace{0.4cm}
 
 
+\BLOCK{ if not cover_single_signoff }
 \begin{minipage}{0.45\textwidth}
 \normalsize
 \setlength{\baselineskip}{14pt}
@@ -229,6 +234,7 @@
 \noindent Date
 \end{minipage}
 \hfill
+\BLOCK{ endif }
 \begin{minipage}{0.45\textwidth}
 \normalsize
 \setlength{\baselineskip}{14pt}

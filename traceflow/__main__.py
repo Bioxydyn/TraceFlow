@@ -92,6 +92,49 @@ def _run(
             help="Render traceability-matrix pages using A3 landscape layout.",
         ),
     ] = False,
+    cover_no_tester: Annotated[
+        bool,
+        Parameter(
+            name="--cover-no-tester",
+            help="Omit the 'Tester' row from the cover metadata table (for fully automated packs).",
+        ),
+    ] = False,
+    cover_test_date: Annotated[
+        Optional[str],
+        Parameter(
+            name="--cover-test-date",
+            help="Value pre-filled into the cover 'Test Date' cell (default: blank).",
+        ),
+    ] = None,
+    cover_result: Annotated[
+        Optional[str],
+        Parameter(
+            name="--cover-result",
+            help="Value pre-filled into the cover 'Result' cell (default: blank).",
+        ),
+    ] = None,
+    cover_approved_usage: Annotated[
+        Optional[str],
+        Parameter(
+            name="--cover-approved-usage",
+            help="Value pre-filled into the cover 'Approved Usage' cell (default: blank).",
+        ),
+    ] = None,
+    cover_single_signoff: Annotated[
+        bool,
+        Parameter(
+            name="--cover-single-signoff",
+            help="Render only the 'Validation pack result approved by' sign-off block, "
+            "omitting the 'Manual tests carried out by' block (for fully automated packs).",
+        ),
+    ] = False,
+    manualtest_comment_height: Annotated[
+        str,
+        Parameter(
+            name="--manualtest-comment-height",
+            help="Height of the fillable Comments box under each manual test (default 1.2cm).",
+        ),
+    ] = "1.2cm",
     individual_pdfs: Annotated[
         bool,
         Parameter(
@@ -106,6 +149,7 @@ def _run(
         test_results_dir=test_results_dir,
         top_left_logo_path=top_left_logo,
         top_right_logo_path=top_right_logo,
+        manualtest_comment_height=manualtest_comment_height,
     )
     include_design = True
     include_supplementary = True
@@ -131,6 +175,11 @@ def _run(
         include_cover_page=not skip_front_page,
         include_toc=not skip_toc,
         cover_signature_boxes=cover_signature_boxes,
+        cover_no_tester=cover_no_tester,
+        cover_test_date=cover_test_date,
+        cover_result=cover_result,
+        cover_approved_usage=cover_approved_usage,
+        cover_single_signoff=cover_single_signoff,
         document_code=document_code,
         document_type=document_type,
         traceability_a3=traceability_a3,

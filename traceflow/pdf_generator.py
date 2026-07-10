@@ -781,7 +781,7 @@ class PdfReport():
 \textbf{Pass} \CheckBox[name=""" + pass_id + r"""]{} \hspace{2cm} \textbf{Fail} \CheckBox[name=""" + fail_id + r"""]{} \hspace{2cm} \textbf{Skip} \CheckBox[name=""" + skip_id + r"""]{} \\
 \vspace{0.05cm}
 \textbf{Comments} \\
-\TextField[name=""" + comment_id + r""", multiline=true, width=\linewidth, height=1.2cm]{}
+\TextField[name=""" + comment_id + r""", multiline=true, width=\linewidth, height=""" + self.manualtest_comment_height + r"""]{}
 \end{Form}
         """  # noqa E501
 
@@ -1191,10 +1191,12 @@ class PdfReport():
         test_results_dir: Optional[str] = None,
         top_left_logo_path: Optional[str] = None,
         top_right_logo_path: Optional[str] = None,
+        manualtest_comment_height: str = "1.2cm",
     ):
         self.document = document
         self.top_left_logo_path = top_left_logo_path
         self.top_right_logo_path = top_right_logo_path
+        self.manualtest_comment_height = manualtest_comment_height
         self.test_results_dir: Optional[str] = None
         if test_results_dir:
             resolved_test_results_dir = os.path.abspath(test_results_dir)
@@ -1238,6 +1240,11 @@ class PdfReport():
         include_cover_page: bool = True,
         include_toc: bool = True,
         cover_signature_boxes: bool = False,
+        cover_no_tester: bool = False,
+        cover_test_date: Optional[str] = None,
+        cover_result: Optional[str] = None,
+        cover_approved_usage: Optional[str] = None,
+        cover_single_signoff: bool = False,
         document_code: Optional[str] = None,
         document_type: Optional[str] = None,
         traceability_a3: bool = False,
@@ -1262,6 +1269,11 @@ class PdfReport():
             tex_vars["include_cover_page"] = include_cover_page
             tex_vars["include_toc"] = include_toc
             tex_vars["cover_signature_boxes"] = cover_signature_boxes
+            tex_vars["cover_no_tester"] = cover_no_tester
+            tex_vars["cover_single_signoff"] = cover_single_signoff
+            tex_vars["cover_test_date"] = self.process_text(cover_test_date) if cover_test_date else ""
+            tex_vars["cover_result"] = self.process_text(cover_result) if cover_result else ""
+            tex_vars["cover_approved_usage"] = self.process_text(cover_approved_usage) if cover_approved_usage else ""
             tex_vars["document_code"] = self.process_text(document_code or "N/A")
             tex_vars["document_type"] = self.process_text(document_type or "TraceFlow Report")
             top_left_logo_name = PdfReport._logo_basename(self.top_left_logo_path, "traceflow-logo.png")
