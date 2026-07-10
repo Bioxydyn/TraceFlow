@@ -76,6 +76,16 @@
 \newcommand{\traceflowtoprightlogo}{\VAR{top_right_logo}}
 \newcommand{\traceflowstandardlogowidth}{4.0cm}
 \newcommand{\traceflowwidelogowidth}{6.0cm}
+% Right-header slot: expands to the logo image when one is set, otherwise to
+% nothing. Used in every \fancyhead[R] (cover, portrait body and A3 landscape)
+% so an omitted right logo never becomes an empty \includegraphics{}.
+\BLOCK{ if top_right_logo }
+\newcommand{\traceflowrightheaderstd}{\includegraphics[width=\traceflowstandardlogowidth,keepaspectratio]{\traceflowtoprightlogo}}
+\newcommand{\traceflowrightheaderwide}{\includegraphics[width=\traceflowwidelogowidth,keepaspectratio]{\traceflowtoprightlogo}}
+\BLOCK{ else }
+\newcommand{\traceflowrightheaderstd}{}
+\newcommand{\traceflowrightheaderwide}{}
+\BLOCK{ endif }
 \newcommand{\traceflowdocumentcode}{\VAR{document_code}}
 \newcommand{\traceflowdocumenttype}{\VAR{document_type}}
 \hypersetup{
@@ -121,7 +131,7 @@
 \begin{document}
 \fancyhf{}
 \fancyhead[L]{\includegraphics[width=\traceflowstandardlogowidth,keepaspectratio]{\traceflowtopleftlogo}}
-\fancyhead[R]{\BLOCK{ if top_right_logo }\includegraphics[width=\traceflowstandardlogowidth,keepaspectratio]{\traceflowtoprightlogo}\BLOCK{ endif }}
+\fancyhead[R]{\traceflowrightheaderstd}
 \fancyhfoffset[L]{0pt}
 \fancyhfoffset[R]{0pt}
 \fancyfoot[L]{\footnotesize \traceflowdocumentcode{} | Report produced using TraceFlow \VAR{version}}

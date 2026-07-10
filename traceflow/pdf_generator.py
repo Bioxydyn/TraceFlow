@@ -278,7 +278,7 @@ class PdfReport():
                 "\\setlength{\\hsize}{\\textwidth}",
                 "\\setlength{\\headwidth}{\\textwidth}",
                 "\\fancyhead[L]{\\includegraphics[width=\\traceflowwidelogowidth,keepaspectratio]{\\traceflowtopleftlogo}}",  # noqa E501
-                "\\fancyhead[R]{\\includegraphics[width=\\traceflowwidelogowidth,keepaspectratio]{\\traceflowtoprightlogo}}",  # noqa E501
+                "\\fancyhead[R]{\\traceflowrightheaderwide}",
             ]
         )
         return lines
@@ -289,7 +289,7 @@ class PdfReport():
             "\\restoregeometry",
             "\\setlength{\\headwidth}{\\textwidth}",
             "\\fancyhead[L]{\\includegraphics[width=\\traceflowstandardlogowidth,keepaspectratio]{\\traceflowtopleftlogo}}",  # noqa E501
-            "\\fancyhead[R]{\\includegraphics[width=\\traceflowstandardlogowidth,keepaspectratio]{\\traceflowtoprightlogo}}",  # noqa E501
+            "\\fancyhead[R]{\\traceflowrightheaderstd}",
             "\\setlength{\\paperwidth}{210mm}",
             "\\setlength{\\paperheight}{297mm}",
             "\\pdfpagewidth=210mm",
