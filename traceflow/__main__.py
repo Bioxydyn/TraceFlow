@@ -128,6 +128,14 @@ def _run(
             "omitting the 'Manual tests carried out by' block (for fully automated packs).",
         ),
     ] = False,
+    no_right_logo: Annotated[
+        bool,
+        Parameter(
+            name="--hide-right-logo",
+            help="Render no logo in the header's right slot (a single left-hand logo). "
+            "Without this the right slot falls back to the bundled logo.",
+        ),
+    ] = False,
     manualtest_comment_height: Annotated[
         str,
         Parameter(
@@ -180,6 +188,7 @@ def _run(
         cover_result=cover_result,
         cover_approved_usage=cover_approved_usage,
         cover_single_signoff=cover_single_signoff,
+        no_right_logo=no_right_logo,
         document_code=document_code,
         document_type=document_type,
         traceability_a3=traceability_a3,

@@ -121,7 +121,7 @@
 \begin{document}
 \fancyhf{}
 \fancyhead[L]{\includegraphics[width=\traceflowstandardlogowidth,keepaspectratio]{\traceflowtopleftlogo}}
-\fancyhead[R]{\includegraphics[width=\traceflowstandardlogowidth,keepaspectratio]{\traceflowtoprightlogo}}
+\fancyhead[R]{\BLOCK{ if top_right_logo }\includegraphics[width=\traceflowstandardlogowidth,keepaspectratio]{\traceflowtoprightlogo}\BLOCK{ endif }}
 \fancyhfoffset[L]{0pt}
 \fancyhfoffset[R]{0pt}
 \fancyfoot[L]{\footnotesize \traceflowdocumentcode{} | Report produced using TraceFlow \VAR{version}}

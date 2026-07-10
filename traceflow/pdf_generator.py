@@ -1245,6 +1245,7 @@ class PdfReport():
         cover_result: Optional[str] = None,
         cover_approved_usage: Optional[str] = None,
         cover_single_signoff: bool = False,
+        no_right_logo: bool = False,
         document_code: Optional[str] = None,
         document_type: Optional[str] = None,
         traceability_a3: bool = False,
@@ -1277,7 +1278,12 @@ class PdfReport():
             tex_vars["document_code"] = self.process_text(document_code or "N/A")
             tex_vars["document_type"] = self.process_text(document_type or "TraceFlow Report")
             top_left_logo_name = PdfReport._logo_basename(self.top_left_logo_path, "traceflow-logo.png")
-            top_right_logo_name = PdfReport._logo_basename(self.top_right_logo_path, "voxelflow-logo.png")
+            # An empty right-logo name suppresses the header's right slot entirely
+            # (the template guards on it); otherwise it falls back to the bundled logo.
+            top_right_logo_name = (
+                "" if no_right_logo
+                else PdfReport._logo_basename(self.top_right_logo_path, "voxelflow-logo.png")
+            )
 
             tex_vars["top_left_logo"] = top_left_logo_name
             tex_vars["top_right_logo"] = top_right_logo_name
@@ -1352,11 +1358,12 @@ class PdfReport():
                     resource_name="traceflow-logo.png",
                     provided_path=self.top_left_logo_path,
                 )
-                self._ensure_logo(
-                    filename=top_right_logo_name,
-                    resource_name="voxelflow-logo.png",
-                    provided_path=self.top_right_logo_path,
-                )
+                if top_right_logo_name:
+                    self._ensure_logo(
+                        filename=top_right_logo_name,
+                        resource_name="voxelflow-logo.png",
+                        provided_path=self.top_right_logo_path,
+                    )
 
                 # Recursively copy all files from the document.input_dir folder to the current folder
                 for root, _, files in os.walk(self.document.input_dir):
