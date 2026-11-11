@@ -679,6 +679,27 @@ def test_cli_volume_errors_exit_1(tmp_path: Path, capsys: pytest.CaptureFixture[
     assert "No volume `E09`" in capsys.readouterr().err
 
 
+def test_cli_volume_refuses_another_documents_code(tmp_path: Path, fake_latex: _FakeLatex,
+                                                   capsys: pytest.CaptureFixture[str]) -> None:
+    import yaml
+
+    corpus, results = _corpus_with_results(tmp_path)
+    manifest = tmp_path / "volumes.yml"
+    manifest.write_text(yaml.safe_dump(_manifest()))
+    common: dict[str, Any] = {
+        "render_mode": "evidence-volume", "volume_manifest": str(manifest), "volume": "audit",
+        "test_results_dir": str(results), "work_dir": str(tmp_path / "work"),
+    }
+    # The report's code (flags copied from the report's command line) would mislabel the volume.
+    rc = traceflow_main._run(str(corpus), "2.0", str(tmp_path / "x.pdf"), document_code="BXD-VF-019", **common)
+    assert rc == 1
+    assert "--document-code `BXD-VF-019` is not the code of volume `BXD-VF-019-E02`" in capsys.readouterr().err
+    assert fake_latex.calls == 0
+    # The volume's own code is accepted.
+    assert traceflow_main._run(str(corpus), "2.0", str(tmp_path / "x.pdf"), document_code="BXD-VF-019-E02",
+                               **common) == 0
+
+
 # ------------------------------------------------------------------ end-to-end review fixes
 
 

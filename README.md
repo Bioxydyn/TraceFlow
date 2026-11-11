@@ -204,9 +204,12 @@ The whole directory is parsed and checked, then the volume prints:
 
 The volume's index is written to `--evidence-index-out`, or `<OUTPUT stem>.evidence-index.json`.
 The render fails unless every home record printed exactly once and every `ev:` label was placed.
-`--document-code` (default: the volume code), `--document-type` (default "Traceability
-Evidence Volume") and `--report-title` (default "<name> <version>: Traceability Evidence Volume
-E01: <title>") override the cover. Render the volumes first, then the report with
+`--document-type` (default "Traceability Evidence Volume") and `--report-title` (default
+"<name> <version>: Traceability Evidence Volume E01: <title>") override the cover.
+`--document-code` is the volume's code from the manifest; any other code (the report's, say)
+is refused, since the index, the document-set table and the report's citations use the
+manifest's code. The report's cover flags (`--cover-test-date`, `--cover-result` and the like)
+do not apply to a volume. Render the volumes first, then the report with
 `--evidence-mode reference` and their indexes: references run one way, report to volume.
 
 ### Project configuration (`config.yml`)

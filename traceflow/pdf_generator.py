@@ -62,6 +62,7 @@ from traceflow.report_structure import (
     source_date_epoch,
 )
 from traceflow.version import __version__
+from traceflow.volumes import ManifestError
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from traceflow.volumes import VolumePlan, VolumeSpec
@@ -2596,6 +2597,14 @@ class PdfReport():
         uses ``date_format`` (default "%d %B %Y"), honouring ``SOURCE_DATE_EPOCH``.
         """
         spec = plan.manifest.volume(volume)
+        if document_code and document_code.strip() != spec.code:
+            # The code is the controlled identity of the file, and the evidence index, the report's
+            # document-set table and its citations all use the manifest's code.
+            raise ManifestError(
+                plan.manifest.path,
+                [f"--document-code `{document_code}` is not the code of volume `{spec.code}`; pass "
+                 f"`{spec.code}` or leave it out"],
+            )
         commit = check_commit(commit)
         date_text = generated_date(date_format or DEFAULT_DATE_FORMAT)
         index_out_path = os.path.abspath(evidence_index_out) if evidence_index_out is not None else None
