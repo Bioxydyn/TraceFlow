@@ -259,6 +259,14 @@ def _run(
             "SOURCE_DATE_EPOCH, when set, fixes the date and the PDF's ID and timestamps.",
         ),
     ] = None,
+    matrix_style: Annotated[
+        Literal["tick", "list"],
+        Parameter(
+            name="--matrix-style",
+            help="'tick' (default): the tick matrices. 'list': a portrait longtable per requirement file "
+            "(Requirement | Title | Parent | Verified by | Evidence | Risks) that repeats its header.",
+        ),
+    ] = "tick",
     toc_depth: Annotated[
         Optional[int],
         Parameter(
@@ -408,6 +416,7 @@ def _run(
         cover_engineer=cover_engineer,
         commit=commit,
         date_format=date_format,
+        matrix_style=matrix_style,
     )
     with open(output, "wb") as f:
         f.write(output_file)

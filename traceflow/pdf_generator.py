@@ -45,9 +45,16 @@ from traceflow.parser import (
     MarkdownDocument,
     RequirementDocument,
     RiskDocument,
-    parse_markdown,
+    Test,
 )
-from traceflow.report_structure import DEFAULT_DATE_FORMAT, check_commit, generated_date, source_date_epoch
+from traceflow.report_latex import StructureRenderer
+from traceflow.report_structure import (
+    DEFAULT_DATE_FORMAT,
+    MATRIX_STYLES,
+    check_commit,
+    generated_date,
+    source_date_epoch,
+)
 from traceflow.version import __version__
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -1747,6 +1754,25 @@ class PdfReport():
         seed = f"{self.document.name}|{self.document.version}|{self._form_fields}"
         return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:10].upper()
 
+    def _render_shell(self, test: "Test", *, command: str = "subsection") -> str:
+        """A test shell: its heading (with the shell's label) and its content."""
+        heading = "\\" + command + "{" + self.process_text(test.test_id + ": " + test.title) + "}"
+        heading += "\\label{" + test.test_id + "}\n\n"
+        self._current_shell_id = test.test_id
+        self._reference_rows_in_shell = 0
+        try:
+            body = self.render_test_content(test.content)
+        finally:
+            self._current_shell_id = None
+        return heading + body + "\n\n"
+
+    def evidence_status(self, evidence_id: str) -> str:
+        """A bound record's status: from its result folder, else the evidence index; ``""`` if unknown."""
+        if self.test_results_dir:
+            return self._load_record(evidence_id).status
+        entry = self.evidence_index.get(evidence_id)
+        return str(entry.get("status", "")) if entry is not None else ""
+
     @staticmethod
     def get_global_tex_vars() -> dict[str, str]:
         return {"version": __version__}
@@ -2072,8 +2098,13 @@ class PdfReport():
         cover_engineer: Optional[str] = None,
         commit: Optional[str] = None,
         date_format: Optional[str] = None,
+        matrix_style: str = "tick",
     ) -> bytes:
         """Render the report. The defaults reproduce today's structure.
+
+        - ``matrix_style``: "tick" (the tick matrices, as today) or "list" (a portrait
+          longtable per requirement file: Requirement | Title | Parent | Verified by | Evidence
+          passed/bound | Risks).
 
         Cover and footer (all opt-in):
 
@@ -2108,6 +2139,8 @@ class PdfReport():
             raise ValueError("evidence_mode `reference` needs an evidence index")
         if toc_depth is not None and not 0 <= toc_depth <= 5:
             raise ValueError("toc_depth must be between 0 and 5")
+        if matrix_style not in MATRIX_STYLES:
+            raise ValueError(f"matrix_style must be one of {MATRIX_STYLES}, not `{matrix_style}`")
         commit = check_commit(commit)
         date_text = generated_date(date_format) if date_format else None
         footer = self._release_footer(commit) if commit else None
@@ -2132,6 +2165,7 @@ class PdfReport():
         self._toc_depth = toc_depth
         self._reset_evidence_state()
         try:
+            structure_latex = StructureRenderer(self, report_code=document_code or "")
             default_title = self.document.name + " " + self.document.version + ": Validation Pack"
             document, top_left_logo_name, top_right_logo_name = self._header_latex(
                 report_title=report_title or default_title,
@@ -2179,19 +2213,21 @@ class PdfReport():
                         document += "\\section{" + self.process_text(req_page.title) + "}\\label{" + section_label + "}\n\n"  # noqa E501
                         document += self.md_to_latex(req_page.generic_content)
 
-                        document += self.build_traceability_matrix(req_page, link_tests=include_tests)
+                        if matrix_style == "list":
+                            document += structure_latex.list_matrix(req_page)
+                        else:
+                            document += self.build_traceability_matrix(req_page, link_tests=include_tests)
 
                         separator = "\\vspace{0.15cm}\n\\noindent\\rule{\\linewidth}{0.4pt}\n\\vspace{0.15cm}\n\n"
                         for requirement_index, requirement in enumerate(req_page.items):
                             document += "\\subsection{" + self.process_text(requirement.req_id + ": " + requirement.title) + "}"  # noqa E501
                             document += "\\label{" + requirement.req_id + "}\n\n"
 
-                            linked_test_content: str = ""
-                            for test_id_linked in requirement.test_ids:
-                                linked_test_content += "**Test ID:** " + test_id_linked + "\n"
-                            if linked_test_content != "":
-                                document += self.md_to_latex(parse_markdown(linked_test_content))
-                                document += "\n\n"
+                            # TF-06: one breakable, linked "Verified by:" line, not one run-on
+                            # "Test ID:" line per shell.
+                            verified_by = structure_latex.verified_by_line(requirement)
+                            if verified_by:
+                                document += verified_by + "\n"
 
                             document += self.md_to_latex(requirement.content)
                             document += "\n\n"
@@ -2208,13 +2244,7 @@ class PdfReport():
 
                         separator = "\\vspace{0.15cm}\n\\noindent\\rule{\\linewidth}{0.4pt}\n\\vspace{0.15cm}\n\n"
                         for test_index, test in enumerate(test_page.items):
-                            document += "\\subsection{" + self.process_text(test.test_id + ": " + test.title) + "}"
-                            document += "\\label{" + test.test_id + "}\n\n"
-                            self._current_shell_id = test.test_id
-                            self._reference_rows_in_shell = 0
-                            document += self.render_test_content(test.content)
-                            self._current_shell_id = None
-                            document += "\n\n"
+                            document += self._render_shell(test)
                             if test_index < len(test_page.items) - 1:
                                 document += separator
 

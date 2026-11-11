@@ -1,6 +1,6 @@
 """Rendering fixes in every mode: the Risk Register heading inside its A3 block (TF-11) and
 the manual-test form kept on one page with stable field names (TF-12); the cover rows, footer
-and date (TF-07); reproducible builds.
+and date (TF-07); reproducible builds; the Verified by line (TF-06) and list matrices (TF-04).
 
 pdflatex is replaced by a stub (``test_evidence_render._FakeLatex``).
 """
@@ -19,7 +19,7 @@ from traceflow.parser import process_directory
 from traceflow.pdf_generator import PdfReport
 from tests.test_evidence_render import _FakeLatex, _corpus_with_results
 from traceflow.volumes import parse_manifest, plan_volumes
-from tests.test_volumes import _manifest, _write
+from tests.test_volumes import _corpus, _manifest, _write
 
 RISKS = """
 # Risk Register
@@ -215,3 +215,51 @@ def test_cli_passes_cover_and_footer_options(tmp_path: Path, monkeypatch: pytest
     assert rc == 0
     assert (captured["cover_version"], captured["cover_engineer"]) == ("Demo 1.0 (commit abc1234)", "")
     assert (captured["commit"], captured["date_format"]) == ("abc1234", "%d %B %Y")
+
+
+def test_verified_by_replaces_the_run_on_test_id_lines(tmp_path: Path, fake_latex: _FakeLatex) -> None:
+    _render_files(tmp_path)
+    tex = fake_latex.tex
+    assert "Test ID:" not in tex
+    upload = tex.split("\\label{REQ-VOX-UPLOAD-001}")[1].split("\\label{REQ-VOX-AUDITLOG-001}")[0]
+    assert (
+        "{\\raggedright\\noindent\\textbf{Verified by:} \\hyperref[TEST-VOX-UPLOAD-001]{\\textbf{TEST-\\allowbreak{}"
+        in upload
+    )
+    assert "(2 evidence records)\\par}" in upload
+    # The default matrix is still the tick matrix.
+    assert "\\diagbox" in tex
+
+
+def test_list_matrix_is_a_portrait_longtable(tmp_path: Path, fake_latex: _FakeLatex) -> None:
+    corpus, results = _hierarchy_corpus(tmp_path)
+    _write(corpus / "requirements" / "Untested Requirements.md",
+           "# Untested Requirements\n\n## REQ-VOX-UNTESTED-001: Nobody checks\n\nParent: REQ-VF-T1-003\n")
+    report = PdfReport(process_directory(str(corpus), version="2.0"), test_results_dir=str(results))
+    report.render(include_design=False, include_supplementary=False, matrix_style="list", traceability_a3=True,
+                  work_dir=str(tmp_path / "work"))
+    tex = fake_latex.tex
+    assert "\\diagbox" not in tex and "\\pdfpagewidth=420mm" in tex  # only the risk register stays A3
+    matrix = tex.split("\\subsection{Traceability Matrix}")[1].split("\\end{longtable}")[0]
+    assert "\\textbf{Requirement} & \\textbf{Title} & \\textbf{Parent} & \\textbf{Verified by}" in matrix
+    assert "\\clearpage" not in matrix and "\\endhead" in matrix
+    untested = tex.split("\\section{Untested Requirements}")[1].split("\\end{longtable}")[0]
+    assert "\\rowcolor{red!18}\\hyperref[REQ-VOX-UNTESTED-001]" in untested
+    assert "& -- & -- \\\\" in untested
+
+
+def test_list_matrix_marks_shells_without_evidence(tmp_path: Path, fake_latex: _FakeLatex) -> None:
+    corpus = _corpus(tmp_path / "corpus", extra_tests="""
+## TEST-VOX-REPORT-002: Manual check
+
+**Requirement ID:** REQ-VOX-REPORT-001
+
+```manualtest
+```
+""")
+    report = PdfReport(process_directory(str(corpus), version="2.0"))
+    report.render(include_design=False, include_supplementary=False, include_tests=False, matrix_style="list",
+                  work_dir=str(tmp_path / "work"))
+    matrix = fake_latex.tex.split("REQ-VOX-REPORT-001]")[1]
+    # Without test results the records are only counted.
+    assert "1 bound" in matrix.split("\\\\")[0]
