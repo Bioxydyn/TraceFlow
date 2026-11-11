@@ -1,0 +1,57 @@
+# Test manifest: BXD-VF-019 split into six evidence volumes over the ten Tier 1s the
+# VoxelFlow corpus has today (REQ-VF-T1-001..010). It follows the six groups of the
+# approved design; until the Tier 1 revision lands, T1-004 sits alone in E03 and data
+# export stays inside T1-008 in E06. Used by tests/test_volumes.py and by
+#   traceflow <voxelflow>/traceflow --check-volumes tests/fixtures/voxelflow-volumes-10-tier1.yml
+structure_revision: 1
+report:
+  code: BXD-VF-019
+  title: Requirements, Tests and Risk Traceability Report
+tier1_prefix: REQ-VF-T1-
+require_single_parent: true
+regulatory_families:
+  - REQ-VOX-21CFR11-*
+  - REQ-VOX-ANNEX11-*
+volumes:
+  - code: BXD-VF-019-E01
+    slug: ingestion
+    title: Data Ingestion, De-identification and Upload Portals
+    audience: Sponsor data managers and site data-protection reviewers
+    tier1: [REQ-VF-T1-001, REQ-VF-T1-002]
+    max_pages: 150
+    max_mb: 10
+  - code: BXD-VF-019-E02
+    slug: access-control
+    title: Authentication, Accounts and Access Control
+    audience: IT security and access-control reviewers, and blinded-read study leads
+    tier1: [REQ-VF-T1-003]
+    max_pages: 150
+    max_mb: 10
+  - code: BXD-VF-019-E03
+    slug: audit-trail
+    title: Audit Trail, Electronic Records and Signatures
+    audience: 21 CFR Part 11 and EU GMP Annex 11 auditors and QA
+    tier1: [REQ-VF-T1-004]
+    max_pages: 150
+    max_mb: 10
+  - code: BXD-VF-019-E04
+    slug: pipelines
+    title: Pipeline Execution, Labbooks, Image Review and Pipeline Configuration
+    audience: Imaging analysts, pipeline owners and QC reviewers
+    tier1: [REQ-VF-T1-005, REQ-VF-T1-010]
+    max_pages: 150
+    max_mb: 10
+  - code: BXD-VF-019-E05
+    slug: provenance
+    title: Document Provenance, Snapshots and Export
+    audience: Data managers and sponsor reviewers of provenance
+    tier1: [REQ-VF-T1-006, REQ-VF-T1-007]
+    max_pages: 150
+    max_mb: 10
+  - code: BXD-VF-019-E06
+    slug: platform
+    title: Platform Security, Reliability, Reporting and Live Updates
+    audience: IT/operations and QA reviewers of platform controls
+    tier1: [REQ-VF-T1-008, REQ-VF-T1-009]
+    max_pages: 150
+    max_mb: 10

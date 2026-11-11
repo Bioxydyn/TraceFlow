@@ -1,4 +1,5 @@
 import os
+import sys
 from typing import Annotated, Optional, Literal
 
 from cyclopts import App, Parameter
@@ -6,6 +7,7 @@ from cyclopts import App, Parameter
 from traceflow.parser import process_directory, Document
 from traceflow.pdf_generator import PdfReport
 from traceflow.version import __version__
+from traceflow.volumes import check_volumes, format_report
 
 app = App(name="traceflow", version=__version__)
 
@@ -13,8 +15,8 @@ app = App(name="traceflow", version=__version__)
 @app.default
 def _run(
     directory: str,
-    version: str,
-    output: str,
+    version: Optional[str] = None,
+    output: Optional[str] = None,
     render_mode: Annotated[
         Literal["all", "requirements-tests-risks", "risks-only"],
         Parameter(
@@ -150,7 +152,25 @@ def _run(
             help="Also emit per-section PDFs alongside the combined validation pack.",
         ),
     ] = False,
+    check_volumes_manifest: Annotated[
+        Optional[str],
+        Parameter(
+            name="--check-volumes",
+            help="Parse the whole directory, partition it with this volume manifest (YAML) and print "
+            "the ID-to-volume map as JSON on stdout instead of rendering. Exits 1 if the partition "
+            "fails (the JSON then lists the errors). VERSION and OUTPUT are not needed.",
+        ),
+    ] = None,
 ) -> int:
+    if check_volumes_manifest is not None:
+        report, exit_code = check_volumes(directory, check_volumes_manifest, version=version or "")
+        sys.stdout.write(format_report(report))
+        for error in report.get("errors", []):
+            sys.stderr.write(f"ERROR: {error}\n")
+        return exit_code
+    if version is None or output is None:
+        sys.stderr.write("ERROR: traceflow needs DIRECTORY VERSION OUTPUT to render a PDF.\n")
+        return 2
     document: Document = process_directory(directory, version=version)
     report: PdfReport = PdfReport(
         document,
