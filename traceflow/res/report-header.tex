@@ -21,6 +21,11 @@
 \usepackage{float}
 \usepackage{titlesec}
 \usepackage{enumitem}
+\usepackage{needspace}
+\BLOCK{ if record_layout }
+% Evidence-record console output: breaks anywhere, even inside one long token.
+\usepackage{fvextra}
+\BLOCK{ endif }
 
 \newcolumntype{R}[2]{%
     >{\adjustbox{angle=#1,lap=\width-(#2)}\bgroup}%
@@ -119,14 +124,32 @@
   {\normalfont\normalsize\bfseries}
   {}{0em}{}
 \titlespacing*{\subsubsection}{0pt}{0.5ex}{0.3ex}
+% Console output: proportional spacing (fullflexible), small type, and breaks anywhere in
+% a long line, each continuation marked with an arrow.
 \lstset{
-  basicstyle=\ttfamily\small,
+  basicstyle=\ttfamily\footnotesize,
+  columns=fullflexible,
+  keepspaces=true,
   breaklines=true,
-  breakatwhitespace=true,
+  breakatwhitespace=false,
+  postbreak=\mbox{\textcolor{gray}{$\hookrightarrow$}\space},
   showstringspaces=false,
   aboveskip=5pt,
   belowskip=5pt
 }
+% Let TeX stretch a line a little rather than push a long word past the margin.
+\setlength{\emergencystretch}{3em}
+\BLOCK{ if toc_depth is not none }
+% Contents to the chosen depth. Headings are unnumbered, so the contents and the body
+% agree and no number is glued to an ID; PDF bookmarks still go three levels deep.
+\setcounter{tocdepth}{\VAR{toc_depth}}
+\setcounter{secnumdepth}{0}
+\hypersetup{bookmarksdepth=3}
+% Room for three- and four-digit page numbers in the contents.
+\makeatletter
+\renewcommand{\@pnumwidth}{2.2em}
+\makeatother
+\BLOCK{ endif }
 
 \begin{document}
 \fancyhf{}
@@ -144,6 +167,9 @@
 \begin{center}
     \vspace*{0.4cm}
     {\LARGE \textbf{\VAR{report_title}}} \\[0.25em]
+\BLOCK{ if cover_subtitle }
+    {\large \VAR{cover_subtitle}} \\[0.25em]
+\BLOCK{ endif }
     {\small \textbf{Generated:} \today}
 \end{center}
 \vspace{0.3cm}
@@ -159,7 +185,20 @@
 \vspace{0.3cm}
 
 \BLOCK{ if include_cover_page }
-\BLOCK{ if cover_signature_boxes }
+\BLOCK{ if cover_rows }
+% A cover with no sign-off: the document is approved as part of another one.
+\begin{table}[H]
+\renewcommand{\arraystretch}{1.35}
+\arrayrulecolor{gray} % Set the color of the horizontal and vertical lines to gray
+\begin{tabular}{|>{\columncolor{gray!30}}m{0.3\linewidth}|m{0.6\linewidth}|}
+\hline
+\BLOCK{ for row in cover_rows }
+\textbf{\VAR{row[0]}} & \VAR{row[1]} \\
+\hline
+\BLOCK{ endfor }
+\end{tabular}
+\end{table}
+\BLOCK{ elif cover_signature_boxes }
 \begin{table}[H]
 \renewcommand{\arraystretch}{1.35}
 \arrayrulecolor{gray} % Set the color of the horizontal and vertical lines to gray

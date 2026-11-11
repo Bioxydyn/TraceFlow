@@ -9,7 +9,7 @@ from pkgutil import get_data
 import random
 import re
 import string
-from typing import Generator, NamedTuple, Optional
+from typing import TYPE_CHECKING, Generator, NamedTuple, Optional
 
 import latex.jinja2
 
@@ -21,36 +21,48 @@ except OSError as exc:
 else:
     _CAIROSVG_IMPORT_ERROR = None
 
+from traceflow.evidence import EvidenceRecord, load_autotest_result, load_evidence_record
+from traceflow.evidence_render import (
+    FIGURE_LABEL_PREFIX,
+    EvidenceIndexError,
+    LABEL_PREFIX,
+    LATEX_TEXT_ESCAPES,
+    breakable,
+    breakable_code,
+    coloured_status,
+    evidence_anchor,
+    latex_escape,
+    listing_ascii,
+    parse_aux_pages,
+    status_label,
+    undefined_references,
+    write_evidence_index,
+)
 from traceflow.parser import (
     Document,
+    EvidenceBinding,
     MarkdownDocument,
     RequirementDocument,
     RiskDocument,
-    extract_autotest_result,
     parse_markdown,
 )
 from traceflow.version import __version__
 
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from traceflow.volumes import VolumePlan, VolumeSpec
+
 _latex_jinja2_env = latex.jinja2.make_env()
 
+EVIDENCE_LAYOUTS = ("legacy", "record")
+EVIDENCE_MODES = ("inline", "reference")
 
-_LATEX_TEXT_ESCAPES = {
-    "\\": r"\textbackslash{}",
-    "&": r"\&",
-    "%": r"\%",
-    "$": r"\$",
-    "#": r"\#",
-    "_": r"\_",
-    "{": r"\{",
-    "}": r"\}",
-    "~": r"\textasciitilde{}",
-    "^": r"\textasciicircum{}",
-}
+_LATEX_TEXT_ESCAPES = LATEX_TEXT_ESCAPES
+_CODE_SPAN_PLACEHOLDER = re.compile("\x00(\\d+)\x00")
 
 
 def _escape_latex_verbatim(text: str) -> str:
     """Escape LaTeX special chars for safe inclusion in \\texttt{} or text mode."""
-    return "".join(_LATEX_TEXT_ESCAPES.get(ch, ch) for ch in text)
+    return latex_escape(text)
 
 
 class IndividualReportSpec(NamedTuple):
@@ -118,6 +130,25 @@ class PdfReport():
         (1, "Low", "green!35"),
     ]
 
+    _FILENAME_ALT = re.compile(r"[A-Za-z0-9._-]+\.(png|jpg|jpeg|gif|svg|pdf)", re.IGNORECASE)
+    # Width as before, plus a height cap so a tall capture never runs off the page.
+    _FIGURE_SIZE = r"width=0.7\textwidth,height=0.6\textheight,keepaspectratio"
+    # Record layout: the capture at its own size, shrunk to fit the text block if larger.
+    _RECORD_FIGURE_BOX = r"max width=\linewidth,max height=0.6\textheight"
+
+    @staticmethod
+    def _sidecar_requirement_ids(sidecar: dict) -> list[str]:
+        """``requirementIds`` (a list), else the single ``requirementId``, from an image sidecar."""
+        ids = sidecar.get("requirementIds")
+        if isinstance(ids, list):
+            found = [str(item).strip() for item in ids if str(item).strip()]
+            if found:
+                return found
+        single = sidecar.get("requirementId")
+        if isinstance(single, str) and single.strip():
+            return [single.strip()]
+        return []
+
     # Common Unicode characters that appear in human-written prose but are not in the
     # default LaTeX font encoding (T1) — translate to safe ASCII equivalents so the
     # PDF compile does not fail on input authored in a UTF-8 editor. Anything not on
@@ -133,7 +164,7 @@ class PdfReport():
         "≠": r"\(\neq\)",   # ≠
         "≈": r"\(\approx\)",  # ≈
         "±": r"\(\pm\)",    # ±
-        "×": r"\(\times\)", # ×
+        "×": r"\(\times\)",  # ×
         "÷": r"\(\div\)",   # ÷
         "…": r"\dots ",     # …
         "•": r"\textbullet ",  # •
@@ -146,7 +177,7 @@ class PdfReport():
     }
 
     @classmethod
-    def _normalise_unicode(cls, text: str) -> str:
+    def _normalise_unicode(cls: type['PdfReport'], text: str) -> str:
         for src, dst in cls._UNICODE_LATEX_REPLACEMENTS.items():
             if src in text:
                 text = text.replace(src, dst)
@@ -154,21 +185,34 @@ class PdfReport():
 
     @staticmethod
     def process_text_impl(text: str, unique_ids: set[str]) -> str:
+        # Code spans are set aside first and put back last, fully escaped and breakable after
+        # ``/ . _ : -``, so a path or a special character inside backticks prints literally and
+        # cannot push past the margin.
+        code_spans: list[str] = []
+
+        def stash_code_span(match: "re.Match[str]") -> str:
+            code_spans.append(match.group(1))
+            return f"\x00{len(code_spans) - 1}\x00"
+
+        text = re.sub(r"`([^`]*)`", stash_code_span, text)
+        # A literal backslash (``C:\\Users``) is text, not the start of a LaTeX command.
+        text = text.replace("\\", "\x01")
         text = PdfReport._normalise_unicode(text)
 
         # Escape literal ``{`` and ``}`` in the original user prose BEFORE any of the
         # substitutions below add their own (intentional, paired) braces. Subsequent
-        # ``\hyperref{...}`` and ``\texttt{...}`` insertions are emitted post-escape, so
-        # their braces survive. The trade-off is that a unique-ID surrounded by literal
-        # braces (e.g. ``{REQ-X}``) loses its hyperref — extremely rare in practice and
-        # preferable to a brace-mismatch crash inside pdflatex.
+        # ``\hyperref{...}`` insertions are emitted post-escape, so their braces survive.
+        # The trade-off is that a unique-ID surrounded by literal braces (e.g. ``{REQ-X}``)
+        # loses its hyperref — extremely rare in practice and preferable to a
+        # brace-mismatch crash inside pdflatex.
         text = text.replace("{", r"\{").replace("}", r"\}")
 
         # Replace any instances of a unique ID within the text to a link to the ID.
         # 1. Explode text into words
         words = text.split()
 
-        # 2. For each word, check if it is a unique ID. unique_ids is a set, so this is O(1)
+        # 2. For each word, check if it is a unique ID. unique_ids is a set, so this is O(1).
+        # A linked ID sits in an \mbox, so it is never hyphenated across lines.
         for index, word in enumerate(words):
             leading = len(word) - len(word.lstrip("()[]{}.,;:<>"))
             trailing = len(word.rstrip("()[]{}.,;:<>"))
@@ -177,7 +221,7 @@ class PdfReport():
             core = word[leading:trailing] if trailing > leading else word[leading:]
             altered_word = core.replace(":", "")
             if altered_word in unique_ids and core:
-                words[index] = f"{prefix}\\hyperref[{altered_word}]{{\\textbf{{{core}}}}}{suffix}"
+                words[index] = f"{prefix}\\mbox{{\\hyperref[{altered_word}]{{\\textbf{{{core}}}}}}}{suffix}"
 
         # 3. Rebuild the text
         new_text = " ".join(words)
@@ -192,17 +236,11 @@ class PdfReport():
         if text.endswith("\n"):
             new_text += "\n"
 
-        # Regular expression to find text wrapped in backticks
-        inline_code_pattern = r'`([^`]*)`'
-
-        # Replace the text wrapped in backticks with LaTeX inline code
-        new_text = re.sub(inline_code_pattern, r'\\texttt{\1}', new_text)
-
         # Escape LaTeX special characters that survive in raw user prose. We deliberately
         # do NOT escape ``\``, ``{``, ``}`` here because the substitutions above
-        # (``\hyperref{...}`` and ``\texttt{...}``) intentionally emit those — escaping
-        # them would mangle the commands. The chars below never appear in our generated
-        # LaTeX commands, so it is safe to escape them globally.
+        # (``\hyperref{...}``) intentionally emit those — escaping them would mangle the
+        # commands. The chars below never appear in our generated LaTeX commands, so it
+        # is safe to escape them globally.
         new_text = (
             new_text.replace(r"&", r"\&")
             .replace(r"_", r"\_")
@@ -210,10 +248,16 @@ class PdfReport():
             .replace(r"#", r"\#")
             .replace(r"$", r"\$")
             .replace(r"^", r"\^{}")
-            .replace(r"~", r"\~{}")
+            .replace(r"~", r"\textasciitilde{}")
         )
 
-        return new_text
+        new_text = new_text.replace("\x01", r"\textbackslash{}")
+
+        # 5. Put the code spans back.
+        return _CODE_SPAN_PLACEHOLDER.sub(
+            lambda match: breakable_code(code_spans[int(match.group(1))], PdfReport._UNICODE_LATEX_REPLACEMENTS),
+            new_text,
+        )
 
     def process_text(self, text: str) -> str:
         return self.process_text_impl(text, self.unique_ids)
@@ -476,7 +520,7 @@ class PdfReport():
         lines.append("\\midrule")
         for sev_name, sev_score in reversed(axis_labels):
             row_cells: list[str] = [f"{sev_name} ({sev_score})"]
-            for prob_name, prob_score in axis_labels:
+            for _prob_name, prob_score in axis_labels:
                 product = sev_score * prob_score
                 band_label, band_colour = self._classify_risk_score(product)
                 if band_colour:
@@ -636,7 +680,8 @@ class PdfReport():
 
         def handle_heading(item: dict) -> str:
             level = item["level"]
-            return "\\" + "sub" * (level - 1) + "section{" + self.process_text(item["children"][0]["text"]) + "}"
+            command = "\\" + "sub" * (level - 1) + "section" + ("*" if item.get("_unnumbered") else "")
+            return command + "{" + self.process_text(item["children"][0]["text"]) + "}"
 
         def handle_list(item: dict) -> str:
             latex = ["\\begin{itemize}"]
@@ -652,10 +697,12 @@ class PdfReport():
             return "".join(latex)
 
         def handle_inline_html(item: dict) -> str:
-            text = item.get("text", "").strip().lower()
-            if text in {"<br>", "<br/>", "<br />"}:
+            raw = item.get("text", "")
+            if raw.strip().lower() in {"<br>", "<br/>", "<br />"}:
                 return "\\\\ "
-            return ""
+            # Anything else (``<docId>``, ``<script nomodule>``) is prose that happens to look
+            # like a tag: print it literally instead of dropping it.
+            return self.process_text(raw)
 
         def handle_image(item: dict) -> str:
             url = item["src"]
@@ -665,34 +712,32 @@ class PdfReport():
             if not caption_raw.strip():
                 # Fall back to alt text, but skip filename-shaped alts (e.g. "screenshot-001.png")
                 # which look like a caption to LaTeX but tell the reader nothing.
-                if alt_text_raw and not re.fullmatch(r"[A-Za-z0-9._-]+\.(png|jpg|jpeg|gif|svg|pdf)", alt_text_raw.strip(), re.IGNORECASE):
+                if alt_text_raw and not self._FILENAME_ALT.fullmatch(alt_text_raw.strip()):
                     caption_raw = alt_text_raw
 
-            assertion_source = (sidecar.get("assertionSource") or "").strip()
-            requirement_id = (sidecar.get("requirementId") or "").strip()
+            requirement_ids = self._sidecar_requirement_ids(sidecar)
             caption_parts: list[str] = []
             if caption_raw.strip():
                 caption_parts.append(self.process_text(caption_raw.strip()))
-            if requirement_id:
+            if requirement_ids:
                 caption_parts.append(
-                    f"\\textit{{(evidence for {self.process_text(requirement_id)})}}"
+                    f"\\textit{{(evidence for {self.process_text(', '.join(requirement_ids))})}}"
                 )
             if not caption_parts:
                 caption_parts.append(r"\textcolor{red!75!black}{\textbf{[Caption missing]}}")
 
+            # The height cap keeps a tall capture (a full-page labbook screenshot) and its
+            # caption on one page; [H] keeps the figure inside its evidence block. The
+            # assertion's source code is not printed: it was truncated or transpiled.
             latex = [
                 '\n\\begin{figure}[H]',
                 '\n\\centering',
-                f'\n\\includegraphics[width=0.7\\textwidth]{{{url}}}',
+                f'\n\\includegraphics[{self._FIGURE_SIZE}]{{{url}}}',
                 "\n\\caption{" + " ".join(caption_parts) + "}",
             ]
-            if assertion_source:
-                truncated = assertion_source if len(assertion_source) <= 200 else assertion_source[:197] + "..."
-                latex.append(
-                    "\n\\par\\noindent\\small\\texttt{"
-                    + _escape_latex_verbatim(truncated)
-                    + "}\\normalsize"
-                )
+            checked_at = str(sidecar.get("checkedAt") or "").strip()
+            if checked_at:
+                latex.append("\n\\par\\footnotesize Checked at " + breakable_code(checked_at) + "\\normalsize")
             latex.append('\n\\end{figure}')
             return ''.join(latex)
 
@@ -792,7 +837,7 @@ class PdfReport():
                 raise ValueError("autotest blocks must include a test ID.")
             if len(lines) > 1:
                 raise ValueError("autotest blocks support exactly one test ID.")
-            return self._render_autotest_result(lines[0])
+            return self._render_autotest_binding(lines[0])
 
         def handle_code(item: dict) -> str:
             language: Optional[str] = None
@@ -862,7 +907,7 @@ class PdfReport():
                 "strong": lambda item: f"\\textbf{{{self.process_text(item['children'][0]['text'])}}}",
                 "emphasis": lambda item: f"\\emph{{{self.process_text(item['children'][0]['text'])}}}",
                 "softbreak": lambda _: "\n",
-                "codespan": lambda item: f"\\texttt{{{self.process_text(item['text'])}}}",
+                "codespan": lambda item: breakable_code(item["text"], self._UNICODE_LATEX_REPLACEMENTS),
                 "raw_latex": lambda item: item.get("text", ""),
                 "linebreak": lambda _: "\n",
             }
@@ -1078,16 +1123,50 @@ class PdfReport():
                 }
         return items
 
-    def _resolve_autotest_result_file(self, test_id: str) -> tuple[str, str]:
+    # ------------------------------------------------------------------ evidence records
+    #
+    # An ``autotest`` block binds one evidence record (a collected test result) to a test
+    # shell. How a binding prints depends on the render options:
+    #
+    # - evidence_mode "inline" (default): the record is printed where it is bound, in the
+    #   "legacy" layout (today's) or the "record" layout (contract section 3: an
+    #   ``Evidence <id>`` header, one provenance line, description, assertions with their
+    #   rows, output, figures). With ``dedupe_evidence`` only the record's home binding
+    #   prints it in full; every other binding prints a one-line pointer.
+    # - evidence_mode "reference": each binding prints one compact row (ID, status, kind,
+    #   assertion captions, ``<volume> p.<page>``) from an evidence index.
+
+    def _reset_evidence_state(self) -> None:
+        self._records: dict[str, EvidenceRecord] = {}
+        self._staged: dict[str, str] = {}
+        # IDs printed in full, in print order, and the label each carries.
+        self._full_rendered: list[str] = []
+        self._labelled: dict[str, str] = {}
+        # Evidence ID -> the shell that prints it in full (de-duplication).
+        self._evidence_homes: dict[str, str] = {}
+        self._current_shell_id: Optional[str] = None
+        self._missing_index_ids: list[str] = []
+        self._reference_rows_in_shell = 0
+        self._warned_ids: set[str] = set()
+        self._scope_cache: dict[str, set[str]] = {}
+        self._tests_by_id = self.document.tests_by_id()
+        self._requirements_by_id = self.document.requirements_by_id()
+        self._bindings: Optional[dict[str, EvidenceBinding]] = None
+
+    def _resolve_result_dir(self, evidence_id: str) -> str:
         if not self.test_results_dir:
             raise RuntimeError(
                 "autotest blocks require --test-results-dir to be set."
             )
-        source_dir = os.path.join(self.test_results_dir, test_id)
+        source_dir = os.path.join(self.test_results_dir, evidence_id)
         if not os.path.isdir(source_dir):
             raise FileNotFoundError(
-                f"Autotest ID `{test_id}` not found in test results directory: {self.test_results_dir}"
+                f"Autotest ID `{evidence_id}` not found in test results directory: {self.test_results_dir}"
             )
+        return source_dir
+
+    def _resolve_autotest_result_file(self, test_id: str) -> tuple[str, str]:
+        source_dir = self._resolve_result_dir(test_id)
         result_file = os.path.join(source_dir, "result.md")
         if not os.path.isfile(result_file):
             raise FileNotFoundError(
@@ -1095,50 +1174,211 @@ class PdfReport():
             )
         return source_dir, result_file
 
+    def _load_record(self, evidence_id: str) -> EvidenceRecord:
+        record = self._records.get(evidence_id)
+        if record is None:
+            record = load_evidence_record(self._resolve_result_dir(evidence_id), evidence_id)
+            self._records[evidence_id] = record
+        return record
+
+    def _stage_result_dir(self, evidence_id: str) -> str:
+        """Copy a result folder to ``autotest-results/`` (once per render); return its path."""
+        staged = self._staged.get(evidence_id)
+        if staged is not None:
+            return staged
+        source_dir = self._resolve_result_dir(evidence_id)
+        staged = "autotest-results/" + self._sanitize_path_component(evidence_id)
+        if os.path.isdir(staged):
+            shutil.rmtree(staged)
+        shutil.copytree(source_dir, staged)
+        self._staged[evidence_id] = staged
+        return staged
+
+    def _warn_missing_fields(self, evidence_id: str, missing_fields: list[str]) -> str:
+        """The stderr warning the VoxelFlow build gates on, and the red banner in the PDF."""
+        if not missing_fields:
+            return ""
+        joined = ", ".join(missing_fields)
+        if evidence_id not in self._warned_ids:
+            self._warned_ids.add(evidence_id)
+            sys.stderr.write(
+                f"WARNING: autotest `{evidence_id}` is missing required fields: {joined}\n"
+            )
+        return (
+            "\n\\par\\noindent\\textcolor{red!75!black}{\\textbf{"
+            + f"Validation gap: this test is missing {joined}. "
+            + "Update the test source so reviewers see what was asserted."
+            + "}}\n"
+        )
+
+    def _evidence_label(self, evidence_id: str) -> str:
+        """``\\label`` and named destination ``ev:<id>``, emitted once per PDF."""
+        if evidence_id in self._labelled:
+            return ""
+        anchor = evidence_anchor(evidence_id)
+        self._labelled[evidence_id] = anchor
+        return f"\\phantomsection\\label{{{anchor}}}\\hypertarget{{{anchor}}}{{}}%\n"
+
+    def _shell_requirement_scope(self, shell_id: Optional[str]) -> set[str]:
+        """A shell's requirement IDs plus every ancestor (``Parent:``) of them."""
+        if not shell_id:
+            return set()
+        cached = self._scope_cache.get(shell_id)
+        if cached is not None:
+            return cached
+        scope: set[str] = set()
+        test = self._tests_by_id.get(shell_id)
+        stack = list(test.req_ids) if test is not None else []
+        while stack:
+            req_id = stack.pop()
+            if req_id in scope:
+                continue
+            scope.add(req_id)
+            requirement = self._requirements_by_id.get(req_id)
+            if requirement is not None:
+                stack.extend(requirement.parent_ids)
+        self._scope_cache[shell_id] = scope
+        return scope
+
+    def _captions_for_shell(self, record: EvidenceRecord, shell_id: Optional[str]) -> list[str]:
+        """Assertion captions that concern the shell's requirements (or name no requirement)."""
+        scope = self._shell_requirement_scope(shell_id)
+        captions: list[str] = []
+        for assertion in record.assertions:
+            if not assertion.requirement_ids or not scope or scope & set(assertion.requirement_ids):
+                captions.append(assertion.caption)
+        return [caption for caption in captions if caption.strip()]
+
+    def _inline_evidence_homes(self) -> dict[str, str]:
+        """Home shell of each bound record, for de-duplication in a single PDF.
+
+        The home is the first shell (corpus order) whose requirements, or their ancestors,
+        include a requirement the record's assertions name; otherwise the first binding.
+        """
+        homes: dict[str, str] = {}
+        for evidence_id, binding in self._evidence_bindings().items():
+            if not binding.shell_ids:
+                continue
+            asserted = set(self._load_record(evidence_id).requirement_ids)
+            home = binding.shell_ids[0]
+            for shell_id in binding.shell_ids:
+                if asserted & self._shell_requirement_scope(shell_id):
+                    home = shell_id
+                    break
+            homes[evidence_id] = home
+        return homes
+
+    def _claims_home(self, evidence_id: str) -> bool:
+        """True if this binding prints the record in full (de-duplication)."""
+        if evidence_id in self._labelled:
+            return False
+        home = self._evidence_homes.get(evidence_id)
+        return home is None or home == self._current_shell_id
+
+    def _render_autotest_binding(self, evidence_id: str) -> str:
+        if self.evidence_mode == "reference":
+            return self._render_evidence_reference(evidence_id)
+        if self.dedupe_evidence and not self._claims_home(evidence_id):
+            return self._render_evidence_pointer(evidence_id)
+        if self.evidence_layout == "record":
+            return self._render_evidence_record(evidence_id)
+        if not os.path.isfile(os.path.join(self._resolve_result_dir(evidence_id), "result.md")):
+            # A result.json-only folder has no Markdown to lay out the legacy way.
+            return self._render_evidence_record(evidence_id)
+        return self._render_autotest_result(evidence_id)
+
+    # ---------------------------------------------------------------- legacy layout
+
+    @staticmethod
+    def _plain_text(node: dict) -> str:
+        if node.get("type") in {"text", "codespan", "inline_html"}:
+            return str(node.get("text", ""))
+        return "".join(PdfReport._plain_text(child) for child in node.get("children", []) or [])
+
+    @classmethod
+    def _drop_description_tails(cls: type['PdfReport'], items: list[dict], description: str) -> list[dict]:
+        """Drop the loose paragraph a multi-line ``- Description:`` bullet leaves behind.
+
+        mistune ends the bullet at its first line break, so the rest of the description
+        became a paragraph after the metadata. The full description is printed instead.
+        """
+        flat_description = " ".join(description.split())
+        kept: list[dict] = []
+        before_sections = True
+        for item in items:
+            if item.get("type") == "heading":
+                before_sections = False
+            if before_sections and item.get("type") == "paragraph" and flat_description:
+                text = " ".join(cls._plain_text(item).split())
+                if text and text in flat_description:
+                    continue
+            kept.append(item)
+        return kept
+
+    @classmethod
+    def _drop_caption_paragraphs(cls: type['PdfReport'], items: list[dict]) -> list[dict]:
+        """Remove the collector's ``**Caption:** ...`` line in front of each image.
+
+        The figure already prints that caption; the extra paragraph was left orphaned at
+        the foot of a page whenever the figure moved to the next one.
+        """
+        for item in items:
+            for node in cls._iter_ast_nodes(item):
+                children = node.get("children")
+                if node.get("type") != "paragraph" or not children:
+                    continue
+                if not any(child.get("type") == "image" for child in children):
+                    continue
+                kept: list[dict] = []
+                in_caption = False
+                for child in children:
+                    if child.get("type") == "strong" and cls._plain_text(child).strip().lower() == "caption:":
+                        in_caption = True
+                        continue
+                    if child.get("type") == "image":
+                        in_caption = False
+                    if in_caption:
+                        # The caption text, including inline HTML such as ``<docId>``.
+                        continue
+                    kept.append(child)
+                node["children"] = kept
+        return items
+
     def _render_autotest_result(self, test_id: str) -> str:
-        source_dir, result_file = self._resolve_autotest_result_file(test_id)
-        staged_root = "autotest-results"
-        os.makedirs(staged_root, exist_ok=True)
-        staged_name = self._sanitize_path_component(test_id)
-        staged_dir = os.path.join(staged_root, staged_name)
-        if os.path.isdir(staged_dir):
-            shutil.rmtree(staged_dir)
-        shutil.copytree(source_dir, staged_dir)
-
-        with open(result_file, "r", encoding="utf-8") as result_handle:
-            result_markdown = result_handle.read()
-
-        parsed_result = parse_markdown(result_markdown)
-        autotest = extract_autotest_result(parsed_result, test_id=test_id)
+        source_dir, _ = self._resolve_autotest_result_file(test_id)
+        staged_dir = self._stage_result_dir(test_id)
+        autotest = load_autotest_result(source_dir, test_id)
+        record = autotest.record
+        # The typed description keeps inline HTML (``<docId>``) and all of a multi-line value.
+        description = record.description if record is not None and record.description else autotest.description
 
         # Build the visible "Description" and "Assertions" blocks ahead of the raw bullets so a
         # reviewer reads intent before metadata. ``autotest.other_items`` keeps any sections
         # other than ``## Assertions`` (e.g. ``## Output``, ``## Screenshots``) in their original
         # order.
-        ordered_items: list[dict] = []
-        if autotest.metadata_items:
-            ordered_items.extend(self._style_autotest_statuses(autotest.metadata_items))
-        ordered_items.extend(self._normalise_autotest_headings(autotest.other_items))
-        ordered_items = self._prefix_image_sources(ordered_items, f"{staged_root}/{staged_name}")
+        other_items = self._drop_description_tails(autotest.other_items, description)
+        other_items = self._drop_caption_paragraphs(other_items)
+        metadata_items = self._style_autotest_statuses(autotest.metadata_items) if autotest.metadata_items else []
+        ordered_items = self._normalise_autotest_headings(other_items)
+        if self._toc_depth is not None:
+            # With a chosen contents depth, evidence sub-headings are unnumbered and kept
+            # out of the contents (``Output``/``Screenshots`` once filled 37 pages of it).
+            for item in ordered_items:
+                if item.get("type") == "heading":
+                    item["_unnumbered"] = True
+        ordered_items = self._prefix_image_sources(ordered_items, staged_dir)
         ordered_items = self._attach_image_sidecar_metadata(ordered_items, staged_dir)
 
         latex_fragments: list[str] = []
-        if autotest.missing_fields:
-            joined = ", ".join(autotest.missing_fields)
-            sys.stderr.write(
-                f"WARNING: autotest `{test_id}` is missing required fields: {joined}\n"
-            )
-            latex_fragments.append(
-                "\n\\par\\noindent\\textcolor{red!75!black}{\\textbf{"
-                + f"Validation gap: this test is missing {joined}. "
-                + "Update the test source so reviewers see what was asserted."
-                + "}}\n"
-            )
+        if self.dedupe_evidence or self._label_records:
+            latex_fragments.append(self._evidence_label(test_id))
+        self._full_rendered.append(test_id)
+        latex_fragments.append(self._warn_missing_fields(test_id, autotest.missing_fields))
 
-        if autotest.description:
+        if description:
             latex_fragments.append(
                 "\n\\subsubsection*{Description}\n"
-                + self.process_text(autotest.description)
+                + self.process_text(description)
                 + "\n"
             )
 
@@ -1149,8 +1389,331 @@ class PdfReport():
             latex_fragments.append("\n\\subsubsection*{Assertions}\n")
             latex_fragments.append(self.md_to_latex(normalised_assertions))
 
+        if metadata_items:
+            # Ragged right, so a long Source path breaks at its separators instead of
+            # running past the margin.
+            latex_fragments.append("{\\raggedright\n" + self.md_to_latex(metadata_items) + "\n\\par}")
         latex_fragments.append(self.md_to_latex(ordered_items))
         return "\n".join(fragment for fragment in latex_fragments if fragment)
+
+    # ---------------------------------------------------------------- record layout
+
+    @staticmethod
+    def _href_url(url: str) -> str:
+        """A URL safe inside ``\\href{...}``, even within another command's argument."""
+        encoded = "".join(
+            f"%{ord(ch):02X}" if ch in "{}\\^~ \"" or ord(ch) < 32 else ch for ch in url.strip()
+        )
+        return encoded.replace("%", "\\%").replace("#", "\\#")
+
+    @staticmethod
+    def _evidence_subheading(title: str, note: str = "") -> str:
+        """An unnumbered sub-heading of a record: never numbered, never in the contents."""
+        suffix = f" {{\\footnotesize\\mdseries {note}}}" if note else ""
+        return (
+            f"\\par\\needspace{{4\\baselineskip}}\\smallskip\\noindent\\textbf{{{title}}}{suffix}"
+            "\\par\\nopagebreak\n"
+        )
+
+    def _evidence_id_text(self, evidence_id: str) -> str:
+        return breakable(evidence_id)
+
+    def _evidence_header(self, record: EvidenceRecord) -> str:
+        evidence_id = record.evidence_id
+        bookmark_text = latex_escape(f"Evidence {evidence_id}")
+        return (
+            "\\par\\needspace{8\\baselineskip}\\medskip\\noindent{\\color{gray!60}\\rule{\\linewidth}{0.6pt}}"
+            "\\par\\nopagebreak\\noindent\n"
+            + self._evidence_label(evidence_id)
+            + f"\\pdfbookmark[3]{{{bookmark_text}}}{{bm-{evidence_anchor(evidence_id)}}}%\n"
+            "\\begin{minipage}[t]{\\dimexpr\\linewidth-3.2cm\\relax}\\raggedright"
+            f"\\textbf{{Evidence {self._evidence_id_text(evidence_id)}}}\\end{{minipage}}\\hfill"
+            f"\\begin{{minipage}}[t]{{3cm}}\\raggedleft {coloured_status(record.status)}\\end{{minipage}}"
+            "\\par\\nopagebreak\n"
+        )
+
+    def _evidence_provenance(self, record: EvidenceRecord) -> str:
+        parts: list[str] = []
+        if record.kind:
+            parts.append(latex_escape(status_label(record.kind)))
+        workflow = record.workflow_name or record.workflow_path
+        if workflow:
+            parts.append(latex_escape(workflow))
+        if record.run_id is not None or record.run_url:
+            run_text = f"run {record.run_id}" if record.run_id is not None else "run"
+            if record.run_url:
+                parts.append(f"\\href{{{self._href_url(record.run_url)}}}{{{run_text}}}")
+            else:
+                parts.append(run_text)
+        if record.duration_text:
+            parts.append(latex_escape(record.duration_text))
+        if record.source:
+            parts.append("Source " + breakable_code(record.source))
+        if not parts:
+            return ""
+        separator = "\\enspace\\textbar\\enspace "
+        return (
+            "\\noindent{\\footnotesize\\raggedright\\color{black!75}" + separator.join(parts) + "\\par}\\nopagebreak\n"
+        )
+
+    def _requirement_list(self, requirement_ids: list[str]) -> str:
+        return ", ".join(self.process_text(req_id) for req_id in requirement_ids)
+
+    def _figure_label(self, evidence_id: str, position: int) -> str:
+        return f"{FIGURE_LABEL_PREFIX}{evidence_anchor(evidence_id)[len(LABEL_PREFIX):]}:{position + 1}"
+
+    def _rows_table(self, rows: list[list[str]]) -> str:
+        cells_per_row = 3
+        lines = [
+            "\\par\\smallskip{\\footnotesize\\setlength{\\tabcolsep}{3pt}\\renewcommand{\\arraystretch}{1.05}%",
+            "\\noindent\\begin{tabularx}{\\linewidth}{@{}"
+            + ">{\\raggedright\\arraybackslash}X" * cells_per_row
+            + "@{}}",
+            "\\toprule",
+            "\\textbf{Check} & \\textbf{Expected} & \\textbf{Actual} \\\\",
+            "\\midrule",
+        ]
+        for row in rows:
+            cells = [str(cell) for cell in row]
+            if len(cells) > cells_per_row:
+                cells = cells[:cells_per_row - 1] + [" ".join(cells[cells_per_row - 1:])]
+            cells += [""] * (cells_per_row - len(cells))
+            lines.append(" & ".join(breakable(PdfReport._normalise_unicode(cell)) for cell in cells) + " \\\\")
+        lines += ["\\bottomrule", "\\end{tabularx}\\par}"]
+        return "\n".join(lines) + "\n"
+
+    def _evidence_assertions(self, record: EvidenceRecord) -> str:
+        if not record.assertions:
+            return ""
+        lines = [self._evidence_subheading("Assertions"), "{\\raggedright", "\\begin{itemize}"]
+        for assertion in record.assertions:
+            caption = self.process_text(assertion.caption) if assertion.caption.strip() else "\\textit{(no caption)}"
+            item = "\\item " + caption
+            if assertion.requirement_ids:
+                item += " {\\footnotesize(" + self._requirement_list(assertion.requirement_ids) + ")}"
+            if assertion.figure is not None and 0 <= assertion.figure < len(record.figures):
+                figure_label = self._figure_label(record.evidence_id, assertion.figure)
+                item += f" {{\\footnotesize--- Figure~\\ref{{{figure_label}}}}}"
+            elif assertion.checked_at:
+                item += " {\\footnotesize--- checked at " + breakable_code(assertion.checked_at) + "}"
+            lines.append(item)
+            if assertion.rows:
+                lines.append(self._rows_table(assertion.rows))
+        lines.append("\\end{itemize}}")
+        return "\n".join(lines) + "\n"
+
+    def _evidence_output(self, record: EvidenceRecord) -> str:
+        output = record.output
+        if output.is_empty:
+            return ""
+        lines = list(output.lines)
+        while lines and not lines[-1].strip():
+            lines.pop()
+        shown = len(lines)
+        if output.truncated and output.total_lines:
+            note = f"(last {shown} of {output.total_lines} lines)"
+        else:
+            note = f"({shown} line{'s' if shown != 1 else ''})"
+        body = "\n".join(listing_ascii(line).replace("\\end{Verbatim}", "\\end {Verbatim}") for line in lines)
+        return (
+            self._evidence_subheading("Output", note)
+            + "\\begin{Verbatim}[fontsize=\\footnotesize,breaklines=true,breakanywhere=true,"
+            + "breaksymbolleft={\\textcolor{gray}{\\tiny$\\hookrightarrow$}}]\n"
+            + body
+            + "\n\\end{Verbatim}\n"
+        )
+
+    def _evidence_figures(self, record: EvidenceRecord, staged_dir: str) -> str:
+        if not record.figures:
+            return ""
+        fragments: list[str] = []
+        for position, figure in enumerate(record.figures):
+            if self._is_external_reference(figure.path):
+                continue
+            staged_path = f"{staged_dir}/{figure.path.lstrip('./')}"
+            if not os.path.isfile(staged_path):
+                raise FileNotFoundError(
+                    f"Evidence `{record.evidence_id}` figure `{figure.path}` is missing from its result folder"
+                )
+            caption = self.process_text(figure.caption.strip()) if figure.caption.strip() else (
+                r"\textcolor{red!75!black}{\textbf{[Caption missing]}}"
+            )
+            if figure.requirement_ids:
+                caption += f" \\textit{{(evidence for {self._requirement_list(figure.requirement_ids)})}}"
+            if figure.short_sha256:
+                caption += f". \\mbox{{SHA-256 \\texttt{{{figure.short_sha256}}}}}"
+            lines = ["\\begin{figure}[H]"]
+            if not fragments:
+                # The sub-heading travels with the first figure, so it is never left alone at
+                # the foot of a page.
+                lines.append("{\\raggedright\\noindent\\textbf{Figures}\\par}\\smallskip")
+            lines += [
+                "\\centering",
+                f"\\adjustbox{{{self._RECORD_FIGURE_BOX}}}{{\\includegraphics{{{staged_path}}}}}",
+                "\\caption{" + caption + "}\\label{" + self._figure_label(record.evidence_id, position) + "}",
+            ]
+            if figure.checked_at:
+                lines.append("{\\footnotesize Checked at " + breakable_code(figure.checked_at) + "\\par}")
+            lines.append("\\end{figure}")
+            fragments.append("\n".join(lines))
+        return "\n".join(fragments) + "\n"
+
+    def _shell_reference(self, shell_id: str, *, with_volume: bool = True) -> str:
+        """A shell ID: a link where its heading is in this PDF, else bold (with its volume)."""
+        if self._volume is None:
+            return self.process_text(shell_id)
+        plan, spec = self._volume
+        placement = plan.shells.get(shell_id)
+        if placement is not None and placement.volume_code == spec.code and shell_id in self._volume_shells:
+            return f"\\mbox{{\\hyperref[vshell:{shell_id}]{{\\textbf{{{latex_escape(shell_id)}}}}}}}"
+        volume_code = placement.volume_code if placement is not None else None
+        suffix = f" (\\mbox{{{latex_escape(volume_code)}}})" if volume_code and with_volume else ""
+        return f"\\mbox{{\\textbf{{{latex_escape(shell_id)}}}}}{suffix}"
+
+    def _evidence_bound_by(self, evidence_id: str) -> str:
+        binding = self._evidence_bindings().get(evidence_id)
+        if binding is None or not binding.shell_ids:
+            return ""
+        shells = ", ".join(self._shell_reference(shell_id) for shell_id in binding.shell_ids)
+        text = "\\textbf{Bound by:} " + shells
+        if binding.requirement_ids:
+            text += ". \\textbf{Requirements:} " + self._requirement_list(binding.requirement_ids)
+        if binding.tier1_ids:
+            text += ". \\textbf{Tier 1:} " + self._requirement_list(binding.tier1_ids)
+        return "\\par\\smallskip\\noindent{\\footnotesize\\raggedright " + text + ".\\par}\n"
+
+    def _evidence_bindings(self) -> dict[str, EvidenceBinding]:
+        if self._bindings is None:
+            hierarchy = self._volume[0].hierarchy if self._volume is not None else self.document.hierarchy
+            self._bindings = self.document.evidence_bindings(hierarchy)
+        return self._bindings
+
+    def _render_evidence_record(self, evidence_id: str) -> str:
+        """Contract section 3 layout. The record carries the ``ev:<id>`` label."""
+        record = self._load_record(evidence_id)
+        staged_dir = self._stage_result_dir(evidence_id)
+        self._full_rendered.append(evidence_id)
+        parts = [
+            self._evidence_header(record),
+            self._evidence_provenance(record),
+            self._warn_missing_fields(evidence_id, record.missing_fields),
+        ]
+        if record.description.strip():
+            parts.append(
+                "\\par\\smallskip\\noindent{\\raggedright\\textbf{Description.} "
+                + self.process_text(record.description.strip())
+                + "\\par}\n"
+            )
+        parts.append(self._evidence_assertions(record))
+        parts.append(self._evidence_output(record))
+        parts.append(self._evidence_figures(record, staged_dir))
+        if self.evidence_bound_by:
+            parts.append(self._evidence_bound_by(evidence_id))
+        return "".join(part for part in parts if part)
+
+    def _home_description(self, evidence_id: str) -> str:
+        """Where a pointer sends the reader: ``under TEST-X, p.~N`` or ``in <volume> under ...``."""
+        anchor = evidence_anchor(evidence_id)
+        if self._volume is not None:
+            plan, spec = self._volume
+            home = plan.evidence.get(evidence_id)
+            if home is not None and home.volume_code != spec.code:
+                where = (
+                    f"in \\mbox{{{latex_escape(home.volume_code)}}} under "
+                    + self._shell_reference(home.shell_id, with_volume=False)
+                )
+                entry = self.evidence_index.get(evidence_id)
+                if entry is not None and str(entry.get("page", "")).strip():
+                    where += f", p.~{latex_escape(str(entry['page']))}"
+                return where
+        home_shell = self._evidence_homes.get(evidence_id)
+        where = f"under {self._shell_reference(home_shell)}, " if home_shell else ""
+        return f"{where}p.~\\pageref{{{anchor}}}"
+
+    def _render_evidence_pointer(self, evidence_id: str) -> str:
+        """One line for a binding whose record is printed in full elsewhere."""
+        record = self._load_record(evidence_id)
+        self._warn_missing_fields(evidence_id, record.missing_fields)
+        line = (
+            "\\par\\smallskip\\noindent{\\small\\raggedright\\textbf{Evidence "
+            + self._evidence_id_text(evidence_id)
+            + "} ("
+            + coloured_status(record.status)
+            + "): full record "
+            + self._home_description(evidence_id)
+            + ".\\par}\n"
+        )
+        captions = self._captions_for_shell(record, self._current_shell_id)
+        if captions:
+            line += "{\\footnotesize\\begin{itemize}\n"
+            line += "\n".join("\\item " + self.process_text(caption) for caption in captions)
+            line += "\n\\end{itemize}}\n"
+        return line
+
+    # ---------------------------------------------------------------- reference rows
+
+    _REFERENCE_COLUMNS = (
+        "@{}>{\\raggedright\\arraybackslash}p{0.31\\linewidth}"
+        ">{\\raggedright\\arraybackslash}p{1.3cm}"
+        ">{\\raggedright\\arraybackslash}p{1.35cm}"
+        ">{\\raggedright\\arraybackslash}X"
+        ">{\\raggedleft\\arraybackslash}p{2.9cm}@{}"
+    )
+
+    def _render_evidence_reference(self, evidence_id: str) -> str:
+        """``ID | status | kind | assertion captions | <volume> p.<page>`` from the evidence index."""
+        entry = self.evidence_index.get(evidence_id)
+        if entry is None:
+            if evidence_id not in self._missing_index_ids:
+                self._missing_index_ids.append(evidence_id)
+            return ""
+        record = self._load_record(evidence_id)
+        indexed_status = str(entry.get("status", "")).strip().lower()
+        if indexed_status != record.status.strip().lower():
+            raise EvidenceIndexError(
+                f"Evidence `{evidence_id}` is `{record.status}` in the test results but `{entry.get('status')}` "
+                f"in the evidence index for {entry.get('volume')}; rebuild the evidence volumes"
+            )
+        self._warn_missing_fields(evidence_id, record.missing_fields)
+        captions = [self.process_text(caption) for caption in self._captions_for_shell(record, self._current_shell_id)]
+        if not captions:
+            # None of the record's assertions names this shell's requirements: list them all,
+            # with the requirements they do name, so the row still says what was asserted.
+            captions = [
+                self.process_text(assertion.caption)
+                + (f" ({self._requirement_list(assertion.requirement_ids)})" if assertion.requirement_ids else "")
+                for assertion in record.assertions
+                if assertion.caption.strip()
+            ]
+        caption_cell = "\\newline ".join("\\textbullet~" + caption for caption in captions)
+        where = f"\\mbox{{{latex_escape(str(entry['volume']))}}} \\mbox{{p.~{latex_escape(str(entry['page']))}}}"
+        lines = [
+            "\\par\\noindent{\\footnotesize\\setlength{\\tabcolsep}{3pt}\\renewcommand{\\arraystretch}{1.1}%",
+            f"\\begin{{tabularx}}{{\\linewidth}}{{{self._REFERENCE_COLUMNS}}}",
+        ]
+        if self._reference_rows_in_shell == 0:
+            lines += [
+                "\\toprule",
+                "\\textbf{Evidence} & \\textbf{Status} & \\textbf{Kind} & \\textbf{Asserted} & \\textbf{Record} \\\\",
+                "\\midrule",
+            ]
+        else:
+            lines.append("\\arrayrulecolor{gray!40}\\hline\\arrayrulecolor{black}")
+        lines.append(
+            " & ".join(
+                [
+                    self._evidence_id_text(evidence_id),
+                    coloured_status(record.status),
+                    latex_escape(status_label(record.kind)) if record.kind else "",
+                    caption_cell,
+                    where,
+                ]
+            )
+            + " \\\\"
+        )
+        lines += ["\\end{tabularx}\\par}"]
+        self._reference_rows_in_shell += 1
+        return "\n".join(lines) + "\n"
 
     @staticmethod
     def get_global_tex_vars() -> dict[str, str]:
@@ -1205,6 +1768,19 @@ class PdfReport():
             self.test_results_dir = resolved_test_results_dir
         self.unique_ids = self._collect_unique_ids()
         self.traceability_a3 = False
+        # Evidence options; ``render`` and ``render_evidence_volume`` set them per call.
+        self.evidence_layout = "legacy"
+        self.evidence_mode = "inline"
+        self.dedupe_evidence = False
+        self.evidence_bound_by = False
+        self.evidence_index: dict[str, dict] = {}
+        # Label every record printed in full (for an evidence index or page references).
+        self._label_records = False
+        # (plan, volume spec) while an evidence volume renders.
+        self._volume: Optional[tuple["VolumePlan", "VolumeSpec"]] = None
+        self._volume_shells: set[str] = set()
+        self._toc_depth: Optional[int] = None
+        self._reset_evidence_state()
 
     @staticmethod
     def _logo_basename(path: Optional[str], default_name: str) -> str:
@@ -1228,6 +1804,159 @@ class PdfReport():
             with open(destination, "wb") as f:
                 f.write(load_resource("traceflow.res", resource_name))
 
+    def _header_latex(
+        self,
+        *,
+        report_title: str,
+        include_cover_page: bool,
+        include_toc: bool,
+        cover_signature_boxes: bool = False,
+        cover_no_tester: bool = False,
+        cover_test_date: Optional[str] = None,
+        cover_result: Optional[str] = None,
+        cover_approved_usage: Optional[str] = None,
+        cover_single_signoff: bool = False,
+        no_right_logo: bool = False,
+        document_code: Optional[str] = None,
+        document_type: Optional[str] = None,
+        toc_depth: Optional[int] = None,
+        cover_subtitle: str = "",
+        cover_rows: Optional[list[tuple[str, str]]] = None,
+    ) -> tuple[str, str, str]:
+        """The rendered ``report-header.tex``, and the left and right logo file names.
+
+        ``cover_rows`` (label, LaTeX value) replaces the standard cover table and its
+        sign-off blocks (an evidence volume is approved as part of its report).
+        """
+        header = _latex_jinja2_env.from_string(
+            load_resource("traceflow.res", "report-header.tex").decode("utf-8")
+        )
+
+        tex_vars: dict[str, object] = dict(self.get_global_tex_vars())
+        tex_vars["report_title"] = self.process_text(report_title)
+        tex_vars["include_cover_page"] = include_cover_page
+        tex_vars["include_toc"] = include_toc
+        tex_vars["cover_signature_boxes"] = cover_signature_boxes
+        tex_vars["cover_no_tester"] = cover_no_tester
+        tex_vars["cover_single_signoff"] = cover_single_signoff
+        tex_vars["cover_test_date"] = self.process_text(cover_test_date) if cover_test_date else ""
+        tex_vars["cover_result"] = self.process_text(cover_result) if cover_result else ""
+        tex_vars["cover_approved_usage"] = self.process_text(cover_approved_usage) if cover_approved_usage else ""
+        tex_vars["document_code"] = self.process_text(document_code or "N/A")
+        tex_vars["document_type"] = self.process_text(document_type or "TraceFlow Report")
+        tex_vars["toc_depth"] = toc_depth
+        tex_vars["cover_subtitle"] = cover_subtitle
+        tex_vars["cover_rows"] = list(cover_rows or [])
+        tex_vars["record_layout"] = self.evidence_layout == "record"
+        top_left_logo_name = PdfReport._logo_basename(self.top_left_logo_path, "traceflow-logo.png")
+        # An empty right-logo name suppresses the header's right slot entirely
+        # (the template guards on it); otherwise it falls back to the bundled logo.
+        top_right_logo_name = (
+            "" if no_right_logo
+            else PdfReport._logo_basename(self.top_right_logo_path, "voxelflow-logo.png")
+        )
+
+        tex_vars["top_left_logo"] = top_left_logo_name
+        tex_vars["top_right_logo"] = top_right_logo_name
+        return header.render(**tex_vars), top_left_logo_name, top_right_logo_name
+
+    def _compile_document(
+        self,
+        document: str,
+        *,
+        top_left_logo_name: str,
+        top_right_logo_name: str,
+        tex_name: Optional[str] = None,
+    ) -> tuple[bytes, str]:
+        """Write the .tex in the current directory, run pdflatex three times.
+
+        Returns the PDF bytes and the file stem, whose ``.aux`` and ``.log`` hold the final
+        pass's labels and warnings.
+        """
+        self._ensure_logo(
+            filename=top_left_logo_name,
+            resource_name="traceflow-logo.png",
+            provided_path=self.top_left_logo_path,
+        )
+        if top_right_logo_name:
+            self._ensure_logo(
+                filename=top_right_logo_name,
+                resource_name="voxelflow-logo.png",
+                provided_path=self.top_right_logo_path,
+            )
+
+        # Recursively copy all files from the document.input_dir folder to the current folder
+        for root, _, files in os.walk(self.document.input_dir):
+            for filename in files:
+                shutil.copy(os.path.join(root, filename), filename)
+
+        output_filename = tex_name or self.get_temporary_filename(suffix=".tex")
+
+        with open(output_filename, "w") as output_file:
+            output_file.write(document)
+
+        pdflatex_command = f"pdflatex -interaction=nonstopmode -halt-on-error {output_filename}"
+        try:
+            for _ in range(3):
+                subprocess.check_output(
+                    pdflatex_command,
+                    shell=True,  # noqa: S602
+                    stderr=subprocess.STDOUT,
+                    universal_newlines=True,
+                    errors="replace",
+                )  # nopep8
+        except subprocess.CalledProcessError as exc:
+            print("Status : FAIL", exc.returncode, exc.output)
+            raise exc
+
+        stem = os.path.splitext(output_filename)[0]
+        with open(stem + ".pdf", "rb") as out:
+            return out.read(), stem
+
+    @staticmethod
+    def _read_text_if_exists(path: str) -> str:
+        if not os.path.isfile(path):
+            return ""
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            return handle.read()
+
+    def _check_references(self, stem: str, *, strict: bool) -> None:
+        """Fail on an undefined reference: any with ``strict``, else any to an evidence record."""
+        missing = undefined_references(self._read_text_if_exists(stem + ".log"), "" if strict else LABEL_PREFIX)
+        if missing:
+            raise ValueError(
+                "pdflatex reports undefined references after the last pass: " + ", ".join(missing)
+            )
+
+    def _evidence_index_entries(self, stem: str, volume_code: str) -> dict[str, dict]:
+        """``{id: {volume, page, status, ...}}`` for every labelled record, from the final .aux."""
+        pages = parse_aux_pages(self._read_text_if_exists(stem + ".aux"))
+        entries: dict[str, dict] = {}
+        unplaced: list[str] = []
+        for evidence_id in self._full_rendered:
+            anchor = self._labelled.get(evidence_id)
+            if anchor is None or evidence_id in entries:
+                continue
+            page = pages.get(anchor)
+            if page is None:
+                unplaced.append(evidence_id)
+                continue
+            record = self._records.get(evidence_id)
+            entries[evidence_id] = {
+                "volume": volume_code,
+                "page": int(page) if page.isdigit() else page,
+                "status": record.status if record is not None else "",
+                "kind": record.kind if record is not None else "",
+                "anchor": anchor,
+                "shell": self._evidence_homes.get(evidence_id, ""),
+                "figures": len(record.figures) if record is not None else 0,
+            }
+        if unplaced:
+            raise ValueError(
+                "The final pdflatex pass placed no label for evidence: " + ", ".join(unplaced)
+            )
+        return entries
+
     def render(
         self,
         *,
@@ -1249,9 +1978,45 @@ class PdfReport():
         document_code: Optional[str] = None,
         document_type: Optional[str] = None,
         traceability_a3: bool = False,
+        evidence_layout: str = "legacy",
+        evidence_mode: str = "inline",
+        dedupe_evidence: bool = False,
+        evidence_bound_by: bool = False,
+        evidence_index: Optional[dict[str, dict]] = None,
+        evidence_index_out: Optional[str] = None,
+        toc_depth: Optional[int] = None,
+        work_dir: Optional[str] = None,
+        strict_references: bool = False,
     ) -> bytes:
+        """Render the report. The defaults reproduce today's structure.
+
+        - ``evidence_layout``: "legacy" (today's evidence blocks) or "record" (contract
+          section 3 records).
+        - ``evidence_mode``: "inline" (records printed where bound) or "reference" (one row
+          per binding, citing ``<volume> p.<page>`` from ``evidence_index``; an ID missing
+          from the index fails the render).
+        - ``dedupe_evidence``: print each record in full once, at its home binding, and a
+          one-line pointer at every other binding.
+        - ``evidence_bound_by``: end each record-layout record with its "Bound by" list.
+        - ``evidence_index_out``: write ``{id: {volume, page, status, ...}}`` for every
+          record printed in full, read from the final pass (``volume`` is the document code).
+        - ``toc_depth``: contents depth; also unnumbers headings (PDF bookmarks keep depth 3).
+        - ``work_dir``: build folder (default ``./report``); the .tex is then ``traceflow.tex``.
+        - ``strict_references``: fail on any undefined reference, not only evidence ones.
+        """
+        if evidence_layout not in EVIDENCE_LAYOUTS:
+            raise ValueError(f"evidence_layout must be one of {EVIDENCE_LAYOUTS}, not `{evidence_layout}`")
+        if evidence_mode not in EVIDENCE_MODES:
+            raise ValueError(f"evidence_mode must be one of {EVIDENCE_MODES}, not `{evidence_mode}`")
+        if evidence_mode == "reference" and evidence_index is None:
+            raise ValueError("evidence_mode `reference` needs an evidence index")
+        if toc_depth is not None and not 0 <= toc_depth <= 5:
+            raise ValueError("toc_depth must be between 0 and 5")
+        # Resolved now: the build runs inside the work directory.
+        index_out_path = os.path.abspath(evidence_index_out) if evidence_index_out is not None else None
         original_unique_ids = self.unique_ids
         original_traceability_a3 = self.traceability_a3
+        original_options = self._evidence_options()
         selected_unique_ids = self._collect_unique_ids(
             include_risks=include_risks,
             include_requirements=include_requirements,
@@ -1259,41 +2024,39 @@ class PdfReport():
         )
         self.unique_ids = selected_unique_ids
         self.traceability_a3 = traceability_a3
+        self.evidence_layout = evidence_layout
+        self.evidence_mode = evidence_mode
+        self.dedupe_evidence = dedupe_evidence and evidence_mode == "inline"
+        self.evidence_bound_by = evidence_bound_by
+        self.evidence_index = dict(evidence_index or {})
+        self._label_records = evidence_index_out is not None
+        self._toc_depth = toc_depth
+        self._reset_evidence_state()
         try:
-            header = _latex_jinja2_env.from_string(
-                load_resource("traceflow.res", "report-header.tex").decode("utf-8")
-            )
-
-            tex_vars = self.get_global_tex_vars()
             default_title = self.document.name + " " + self.document.version + ": Validation Pack"
-            tex_vars["report_title"] = self.process_text(report_title or default_title)
-            tex_vars["include_cover_page"] = include_cover_page
-            tex_vars["include_toc"] = include_toc
-            tex_vars["cover_signature_boxes"] = cover_signature_boxes
-            tex_vars["cover_no_tester"] = cover_no_tester
-            tex_vars["cover_single_signoff"] = cover_single_signoff
-            tex_vars["cover_test_date"] = self.process_text(cover_test_date) if cover_test_date else ""
-            tex_vars["cover_result"] = self.process_text(cover_result) if cover_result else ""
-            tex_vars["cover_approved_usage"] = self.process_text(cover_approved_usage) if cover_approved_usage else ""
-            tex_vars["document_code"] = self.process_text(document_code or "N/A")
-            tex_vars["document_type"] = self.process_text(document_type or "TraceFlow Report")
-            top_left_logo_name = PdfReport._logo_basename(self.top_left_logo_path, "traceflow-logo.png")
-            # An empty right-logo name suppresses the header's right slot entirely
-            # (the template guards on it); otherwise it falls back to the bundled logo.
-            top_right_logo_name = (
-                "" if no_right_logo
-                else PdfReport._logo_basename(self.top_right_logo_path, "voxelflow-logo.png")
+            document, top_left_logo_name, top_right_logo_name = self._header_latex(
+                report_title=report_title or default_title,
+                include_cover_page=include_cover_page,
+                include_toc=include_toc,
+                cover_signature_boxes=cover_signature_boxes,
+                cover_no_tester=cover_no_tester,
+                cover_test_date=cover_test_date,
+                cover_result=cover_result,
+                cover_approved_usage=cover_approved_usage,
+                cover_single_signoff=cover_single_signoff,
+                no_right_logo=no_right_logo,
+                document_code=document_code,
+                document_type=document_type,
+                toc_depth=toc_depth,
             )
 
-            tex_vars["top_left_logo"] = top_left_logo_name
-            tex_vars["top_right_logo"] = top_right_logo_name
-            document = header.render(**tex_vars)
+            build_dir = work_dir or "report"
+            # Create the build directory ("report" by default) if it doesn't exist
+            os.makedirs(build_dir, exist_ok=True)
 
-            # Create the "report" directory if it doesn't exist
-            if not os.path.exists("report"):
-                os.mkdir("report")
-
-            with isolated_filesystem("report"):
+            with isolated_filesystem(build_dir):
+                if self.dedupe_evidence and include_tests:
+                    self._evidence_homes = self._inline_evidence_homes()
 
                 if include_design:
                     for design_doc in self.document.design_documents:
@@ -1310,14 +2073,14 @@ class PdfReport():
                 if include_requirements:
                     for req_page in self.document.requirements:
                         section_label = self._build_label_from_text("requirements", req_page.title)
-                        document += "\\section{" + self.process_text(req_page.title) + "}\\label{" + section_label + "}\n\n"
+                        document += "\\section{" + self.process_text(req_page.title) + "}\\label{" + section_label + "}\n\n"  # noqa E501
                         document += self.md_to_latex(req_page.generic_content)
 
                         document += self.build_traceability_matrix(req_page, link_tests=include_tests)
 
                         separator = "\\vspace{0.15cm}\n\\noindent\\rule{\\linewidth}{0.4pt}\n\\vspace{0.15cm}\n\n"
                         for requirement_index, requirement in enumerate(req_page.items):
-                            document += "\\subsection{" + self.process_text(requirement.req_id + ": " + requirement.title) + "}"
+                            document += "\\subsection{" + self.process_text(requirement.req_id + ": " + requirement.title) + "}"  # noqa E501
                             document += "\\label{" + requirement.req_id + "}\n\n"
 
                             linked_test_content: str = ""
@@ -1337,78 +2100,306 @@ class PdfReport():
                 if include_tests:
                     for test_page in self.document.tests:
                         section_label = self._build_label_from_text("tests", test_page.title)
-                        document += "\\section{" + self.process_text(test_page.title) + "}\\label{" + section_label + "}\n\n"
+                        document += "\\section{" + self.process_text(test_page.title) + "}\\label{" + section_label + "}\n\n"  # noqa E501
                         document += self.md_to_latex(test_page.generic_content)
 
                         separator = "\\vspace{0.15cm}\n\\noindent\\rule{\\linewidth}{0.4pt}\n\\vspace{0.15cm}\n\n"
                         for test_index, test in enumerate(test_page.items):
                             document += "\\subsection{" + self.process_text(test.test_id + ": " + test.title) + "}"
                             document += "\\label{" + test.test_id + "}\n\n"
+                            self._current_shell_id = test.test_id
+                            self._reference_rows_in_shell = 0
                             document += self.render_test_content(test.content)
+                            self._current_shell_id = None
                             document += "\n\n"
                             if test_index < len(test_page.items) - 1:
                                 document += separator
 
                         document += "\\newpage\n\n"
 
-                document += r"%%%%%%%%%%% END DOCUMENT" + "\n\n" r"\label{LastPage}" + "\n\n" + r"\end{document}" + "\n"
-
-                self._ensure_logo(
-                    filename=top_left_logo_name,
-                    resource_name="traceflow-logo.png",
-                    provided_path=self.top_left_logo_path,
-                )
-                if top_right_logo_name:
-                    self._ensure_logo(
-                        filename=top_right_logo_name,
-                        resource_name="voxelflow-logo.png",
-                        provided_path=self.top_right_logo_path,
+                if self._missing_index_ids:
+                    raise EvidenceIndexError(
+                        "These evidence IDs are bound in the report but are in no evidence index "
+                        "(--evidence-index): " + ", ".join(self._missing_index_ids)
                     )
 
-                # Recursively copy all files from the document.input_dir folder to the current folder
-                for root, _, files in os.walk(self.document.input_dir):
-                    for filename in files:
-                        shutil.copy(os.path.join(root, filename), filename)
+                document += r"%%%%%%%%%%% END DOCUMENT" + "\n\n" r"\label{LastPage}" + "\n\n" + r"\end{document}" + "\n"
 
-                output_filename = self.get_temporary_filename(suffix=".tex")
-
-                with open(output_filename, "w") as output_file:
-                    output_file.write(document)
-
-                pdflatex_command = f"pdflatex -interaction=nonstopmode -halt-on-error {output_filename}"
-                try:
-                    subprocess.check_output(
-                        pdflatex_command,
-                        shell=True,  # noqa: S602
-                        stderr=subprocess.STDOUT,
-                        universal_newlines=True,
-                        errors="replace",
-                    )  # nopep8
-                    subprocess.check_output(
-                        pdflatex_command,
-                        shell=True,  # noqa: S602
-                        stderr=subprocess.STDOUT,
-                        universal_newlines=True,
-                        errors="replace",
-                    )  # nopep8
-                    subprocess.check_output(
-                        pdflatex_command,
-                        shell=True,  # noqa: S602
-                        stderr=subprocess.STDOUT,
-                        universal_newlines=True,
-                        errors="replace",
-                    )  # nopep8
-                except subprocess.CalledProcessError as exc:
-                    print("Status : FAIL", exc.returncode, exc.output)
-                    raise exc
-
-                output_pdf = os.path.splitext(output_filename)[0] + ".pdf"
-
-                with open(output_pdf, "rb") as out:
-                    return out.read()
+                pdf_bytes, stem = self._compile_document(
+                    document,
+                    top_left_logo_name=top_left_logo_name,
+                    top_right_logo_name=top_right_logo_name,
+                    tex_name="traceflow.tex" if work_dir else None,
+                )
+                if strict_references or self.dedupe_evidence:
+                    self._check_references(stem, strict=strict_references)
+                if index_out_path is not None:
+                    write_evidence_index(index_out_path, self._evidence_index_entries(stem, document_code or ""))
+                return pdf_bytes
         finally:
             self.unique_ids = original_unique_ids
             self.traceability_a3 = original_traceability_a3
+            self._restore_evidence_options(original_options)
+
+    def _evidence_options(self) -> tuple:
+        return (
+            self._toc_depth,
+            self.evidence_layout,
+            self.evidence_mode,
+            self.dedupe_evidence,
+            self.evidence_bound_by,
+            self.evidence_index,
+            self._label_records,
+            self._volume,
+            self._volume_shells,
+        )
+
+    def _restore_evidence_options(self, options: tuple) -> None:
+        (
+            self._toc_depth,
+            self.evidence_layout,
+            self.evidence_mode,
+            self.dedupe_evidence,
+            self.evidence_bound_by,
+            self.evidence_index,
+            self._label_records,
+            self._volume,
+            self._volume_shells,
+        ) = options
+
+    # ------------------------------------------------------------------ evidence volumes
+
+    @staticmethod
+    def volume_short_code(report_code: str, volume_code: str, index: int) -> str:
+        """``BXD-VF-019-E03`` -> ``E03`` (``E<nn>`` from the position otherwise)."""
+        prefix = report_code + "-"
+        if report_code and volume_code.startswith(prefix) and len(volume_code) > len(prefix):
+            return volume_code[len(prefix):]
+        return f"E{index:02d}"
+
+    def _toc_heading(self, level: str, text: str, *, label: str = "", new_page: bool = False) -> str:
+        """An unnumbered heading with a contents entry and a bookmark."""
+        latex_text = self.process_text(text)
+        plain = latex_escape(text)
+        command = {"section": "section*", "subsection": "subsection*"}[level]
+        lines = ["\\clearpage" if new_page else "", f"\\{command}{{{latex_text}}}", "\\phantomsection"]
+        if label:
+            lines.append(f"\\label{{{label}}}")
+        lines.append(f"\\addcontentsline{{toc}}{{{level}}}{{\\texorpdfstring{{{latex_text}}}{{{plain}}}}}")
+        return "\n".join(line for line in lines if line) + "\n"
+
+    def _volume_how_to_read(self, plan: "VolumePlan", spec: "VolumeSpec", version: str, record_count: int) -> str:
+        report_code = latex_escape(plan.manifest.report_code)
+        report = f"{report_code} {latex_escape(version)}".strip()
+        count = len(plan.manifest.volumes)
+        scope = ", ".join(f"\\mbox{{{latex_escape(tier1_id)}}}" for tier1_id in spec.tier1_ids)
+        records = f"{record_count} record{'s' if record_count != 1 else ''}"
+        return (
+            self._toc_heading("section", "How to read this volume")
+            + f"This is evidence volume {spec.index} of {count} of {report}"
+            + (f", {latex_escape(plan.manifest.report_title)}" if plan.manifest.report_title else "")
+            + f". It covers Tier 1 {scope}, and holds every evidence record whose home is a test shell "
+            + f"under {'them' if len(spec.tier1_ids) > 1 else 'it'}, each exactly once: {records}.\n\n"
+            + "\\textbf{Where the rest is.} The requirements, the test shells (their description, steps and "
+            + f"expected results) and the release verdict are in {report}. Here a shell appears only as a "
+            + "heading: its ID, its title and the requirements it verifies. "
+            + f"{report_code} cites each record as ``{latex_escape(spec.code)} p.~N''; the record index "
+            + "gives the same pages.\n\n"
+            + "\\textbf{How a record reads.}\n"
+            + "\\begin{itemize}\n"
+            + "\\item \\textbf{Header:} \\textbf{Evidence} and the record ID, with its status on the right. "
+            + "Each record is also a named PDF destination, \\texttt{ev:<ID>}.\n"
+            + "\\item \\textbf{Provenance line:} kind, CI workflow, CI run (linked when it has a URL), "
+            + "duration and the test's source.\n"
+            + "\\item \\textbf{Description:} what the test does.\n"
+            + "\\item \\textbf{Assertions:} each check the test recorded as passing, the requirements it "
+            + "covers and, where recorded, a table of check, expected and actual values.\n"
+            + "\\item \\textbf{Output:} the console output, only when the test printed some.\n"
+            + "\\item \\textbf{Figures:} the screenshots and images the test saved.\n"
+            + "\\item \\textbf{Bound by:} every test shell, requirement and Tier 1 that uses the record. "
+            + "A shell in another volume is shown with that volume's code.\n"
+            + "\\end{itemize}\n\n"
+            + "\\textbf{Figures.} Each figure is the original image collected from CI, embedded unaltered at "
+            + "its native resolution and only scaled to fit the page. Its caption ends with the first 12 "
+            + "hexadecimal characters of the SHA-256 of the original file, so the image can be checked "
+            + "against the CI artifact.\n\n"
+            + "\\textbf{Records bound more than once.} A record used by several shells is printed in full "
+            + "once, under its home shell. Every other shell that binds it shows a one-line pointer: to the "
+            + "page in this volume, or to the volume that holds the record.\n\n"
+            + f"\\textbf{{Approval.}} This volume has no signature block. It is approved as part of {report}, "
+            + "whose document-set table lists this file's SHA-256.\n\n"
+            + "\\clearpage\n"
+        )
+
+    def _volume_record_index(self, plan: "VolumePlan", home_ids: list[str]) -> str:
+        columns = (
+            "@{}>{\\raggedright\\arraybackslash}p{0.43\\linewidth}"
+            ">{\\raggedright\\arraybackslash}p{1.45cm}"
+            ">{\\raggedright\\arraybackslash}p{0.31\\linewidth}"
+            ">{\\raggedleft\\arraybackslash}p{0.9cm}@{}"
+        )
+        header = "\\textbf{Evidence ID} & \\textbf{Status} & \\textbf{Bound by} & \\textbf{Page} \\\\"
+        lines = [
+            self._toc_heading("section", "Record index"),
+            "{\\footnotesize\\setlength{\\tabcolsep}{3pt}\\renewcommand{\\arraystretch}{1.1}",
+            f"\\begin{{longtable}}{{{columns}}}",
+            "\\toprule", header, "\\midrule", "\\endfirsthead",
+            "\\toprule", header, "\\midrule", "\\endhead",
+            "\\bottomrule", "\\endlastfoot",
+        ]
+        for evidence_id in home_ids:
+            record = self._load_record(evidence_id)
+            anchor = evidence_anchor(evidence_id)
+            binding = plan.evidence[evidence_id].binding
+            shells = ", ".join(self._shell_reference(shell_id) for shell_id in binding.shell_ids)
+            lines.append(
+                f"\\hyperref[{anchor}]{{{self._evidence_id_text(evidence_id)}}} & {coloured_status(record.status)} & "
+                f"{shells} & \\pageref{{{anchor}}} \\\\"
+            )
+        lines += ["\\end{longtable}}", "\\clearpage"]
+        return "\n".join(lines) + "\n"
+
+    def _volume_body(self, plan: "VolumePlan", spec: "VolumeSpec") -> str:
+        fragments: list[str] = []
+        for group in plan.layout(spec.code):
+            title = f"{group.tier1_id}: {group.title}" if group.title else group.tier1_id
+            fragments.append(self._toc_heading("section", title, label=f"vtier1:{group.tier1_id}", new_page=True))
+            shells = [shell for shell in group.shells if shell.evidence_ids]
+            if not shells:
+                fragments.append("No evidence record is bound under this Tier 1.\n")
+            for shell in shells:
+                heading = f"{shell.shell_id}: {shell.title}" if shell.title else shell.shell_id
+                fragments.append(self._toc_heading("subsection", heading, label=f"vshell:{shell.shell_id}"))
+                if shell.requirement_ids:
+                    fragments.append(
+                        "\\noindent{\\footnotesize\\raggedright Verifies: "
+                        + self._requirement_list(shell.requirement_ids)
+                        + ".\\par}\\nopagebreak\n"
+                    )
+                self._current_shell_id = shell.shell_id
+                for evidence_id in shell.evidence_ids:
+                    if evidence_id in plan.evidence:
+                        fragments.append(self._render_autotest_binding(evidence_id))
+                self._current_shell_id = None
+        return "\n".join(fragments)
+
+    def render_evidence_volume(
+        self,
+        plan: "VolumePlan",
+        volume: str,
+        *,
+        report_title: Optional[str] = None,
+        document_code: Optional[str] = None,
+        document_type: Optional[str] = None,
+        include_toc: bool = True,
+        toc_depth: int = 2,
+        no_right_logo: bool = False,
+        cover_version: Optional[str] = None,
+        evidence_index: Optional[dict[str, dict]] = None,
+        evidence_index_out: Optional[str] = None,
+        work_dir: Optional[str] = None,
+        strict_references: bool = False,
+    ) -> tuple[bytes, dict[str, dict]]:
+        """Render one evidence volume of ``plan`` and return the PDF and its evidence index.
+
+        The volume holds a cover (no signature block), a how-to-read page, a record index
+        and, per Tier 1 and per shell heading, every record homed in the volume, once, in the
+        record layout with its "Bound by" list. Other bindings print a pointer. REQ and TEST
+        IDs print as bold text, since the volume does not contain their sections.
+
+        ``evidence_index`` (optional, other volumes' indexes) adds page numbers to pointers into
+        other volumes. ``evidence_index_out`` writes this volume's index JSON.
+        """
+        spec = plan.manifest.volume(volume)
+        index_out_path = os.path.abspath(evidence_index_out) if evidence_index_out is not None else None
+        report_code = plan.manifest.report_code
+        version = self.document.version
+        original_unique_ids = self.unique_ids
+        original_options = self._evidence_options()
+        self.unique_ids = set()
+        self.evidence_layout = "record"
+        self.evidence_mode = "inline"
+        self.dedupe_evidence = True
+        self.evidence_bound_by = True
+        self.evidence_index = dict(evidence_index or {})
+        self._label_records = True
+        self._volume = (plan, spec)
+        self._reset_evidence_state()
+        self._evidence_homes = {evidence_id: home.shell_id for evidence_id, home in plan.evidence.items()}
+        layout = plan.layout(spec.code)
+        self._volume_shells = {shell.shell_id for group in layout for shell in group.shells if shell.evidence_ids}
+        home_ids = plan.home_evidence_ids(spec.code)
+        try:
+            records = [self._load_record(evidence_id) for evidence_id in home_ids]
+            passed = sum(1 for record in records if record.passed)
+            count = len(plan.manifest.volumes)
+            short_code = self.volume_short_code(report_code, spec.code, spec.index)
+            report = f"{report_code} {version}".strip()
+            title = report_title or (
+                f"{self.document.name} {version}: Traceability Evidence Volume {short_code}: {spec.title}"
+            )
+            tier1_scope = "\\newline ".join(
+                self.process_text(f"{tier1_id}: {plan.tier1_titles.get(tier1_id, '')}".rstrip(": "))
+                for tier1_id in spec.tier1_ids
+            )
+            cover_rows = [
+                ("Part of", latex_escape(report)),
+                ("Volume", f"{spec.index} of {count}"),
+                ("Version under test", self.process_text(cover_version or f"{self.document.name} {version}".strip())),
+                ("Tier 1 scope", tier1_scope),
+                (
+                    "Result",
+                    f"{passed} of {len(records)} records in this volume passed. "
+                    f"The release verdict is in \\mbox{{{latex_escape(report_code)}}}.",
+                ),
+                ("Initial Report Generation Date", "\\today"),
+                (
+                    "Approval",
+                    f"Approved as part of \\mbox{{{latex_escape(report)}}}; no separate signature. This file's "
+                    f"SHA-256 is listed in the document-set table of \\mbox{{{latex_escape(report_code)}}}.",
+                ),
+            ]
+            document, top_left_logo_name, top_right_logo_name = self._header_latex(
+                report_title=title,
+                include_cover_page=True,
+                include_toc=include_toc,
+                no_right_logo=no_right_logo,
+                document_code=document_code or spec.code,
+                document_type=document_type or "Traceability Evidence Volume",
+                toc_depth=toc_depth,
+                cover_subtitle=latex_escape(f"Evidence volume {spec.index} of {count}, part of {report}"),
+                cover_rows=cover_rows,
+            )
+
+            build_dir = work_dir or "report"
+            os.makedirs(build_dir, exist_ok=True)
+            with isolated_filesystem(build_dir):
+                document += self._volume_how_to_read(plan, spec, version, len(home_ids))
+                document += self._volume_record_index(plan, home_ids)
+                document += self._volume_body(plan, spec)
+                document += r"%%%%%%%%%%% END DOCUMENT" + "\n\n" r"\label{LastPage}" + "\n\n" + r"\end{document}" + "\n"
+
+                if sorted(self._full_rendered) != sorted(home_ids):
+                    printed = set(self._full_rendered)
+                    raise ValueError(
+                        f"Volume {spec.code} must print each of its {len(home_ids)} home records once; "
+                        f"missing {sorted(set(home_ids) - printed)}, "
+                        f"repeated {sorted({e for e in self._full_rendered if self._full_rendered.count(e) > 1})}"
+                    )
+                pdf_bytes, stem = self._compile_document(
+                    document,
+                    top_left_logo_name=top_left_logo_name,
+                    top_right_logo_name=top_right_logo_name,
+                    tex_name="traceflow.tex" if work_dir else None,
+                )
+                self._check_references(stem, strict=strict_references)
+                entries = self._evidence_index_entries(stem, spec.code)
+                if index_out_path is not None:
+                    write_evidence_index(index_out_path, entries)
+                return pdf_bytes, entries
+        finally:
+            self.unique_ids = original_unique_ids
+            self._restore_evidence_options(original_options)
 
     def _individual_report_specs(self) -> list[IndividualReportSpec]:
         specs: list[IndividualReportSpec] = []
@@ -1490,7 +2481,15 @@ class PdfReport():
         for spec in self._individual_report_specs():
             output_path = f"{base_output_path}-{spec.suffix}{output_ext}"
             title = f"{self.document.name} {self.document.version}: {spec.title}"
-            pdf_bytes = self.render(report_title=title, include_cover_page=False, **spec.flags)
+            pdf_bytes = self.render(
+                report_title=title,
+                include_cover_page=False,
+                include_design=spec.flags["include_design"],
+                include_supplementary=spec.flags["include_supplementary"],
+                include_risks=spec.flags["include_risks"],
+                include_requirements=spec.flags["include_requirements"],
+                include_tests=spec.flags["include_tests"],
+            )
             with open(output_path, "wb") as f:
                 f.write(pdf_bytes)
             output_files.append(output_path)

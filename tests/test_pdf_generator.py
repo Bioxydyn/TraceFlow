@@ -1,7 +1,6 @@
 import io
 import json
 import os
-import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr
@@ -75,7 +74,7 @@ class TestPdfGenerator(unittest.TestCase):
         text = "This is some text with a UNIQUE-ID-001 and `code formatted` text too."
         latex = PdfReport.process_text_impl(text, {"UNIQUE-ID-001"})
         expected = (
-            r"This is some text with a \hyperref[UNIQUE-ID-001]{\textbf{UNIQUE-ID-001}}"
+            r"This is some text with a \mbox{\hyperref[UNIQUE-ID-001]{\textbf{UNIQUE-ID-001}}}"
             r" and \texttt{code formatted} text too."
         )
         self.assertEqual(latex, expected)
@@ -99,7 +98,7 @@ class TestPdfGenerator(unittest.TestCase):
         latex = PdfReport.process_text_impl("LAST^FIRST 50% off ~50 #x $1", set())
         self.assertIn(r"\^{}", latex)
         self.assertIn(r"\%", latex)
-        self.assertIn(r"\~{}", latex)
+        self.assertIn(r"\textasciitilde{}", latex)
         self.assertIn(r"\#", latex)
         self.assertIn(r"\$", latex)
         # Existing escapes still apply
@@ -146,7 +145,7 @@ class TestPdfGenerator(unittest.TestCase):
         report = PdfReport(self._build_document())
         cover_flags: list[Optional[bool]] = []
 
-        def fake_render(self, **kwargs):  # type: ignore[override]
+        def fake_render(self: PdfReport, **kwargs: object) -> bytes:  # type: ignore[override]
             cover_flags.append(kwargs.get("include_cover_page"))
             return b"%PDF-FAKE"
 
@@ -403,8 +402,9 @@ class TestPdfGenerator(unittest.TestCase):
         self.assertNotIn(r"\caption{screenshot-001.png}", latex)
         # Hyperlinked requirement id must appear inside the caption
         self.assertIn(r"\hyperref[REQ-001]{\textbf{REQ-001}}", latex)
-        # Assertion source must appear in monospace below the figure
-        self.assertIn(r"await expect(page).toHaveURL", latex)
+        # The assertion's source code is no longer printed under the figure (TF-01): it was
+        # truncated or transpiled and told the reader nothing reliable.
+        self.assertNotIn(r"await expect(page).toHaveURL", latex)
 
     def test_handle_image_falls_back_to_caption_missing_marker(self) -> None:
         report = PdfReport(self._build_document())
