@@ -239,7 +239,7 @@ class StructureRenderer:
     # ------------------------------------------------------------------ hierarchy: front matter
 
     def _section(self, title: str, label: str = "", *, new_page: bool = True) -> str:
-        text = self.report.process_text(title)
+        text = self.report.heading_text(title)
         label_text = f"\\label{{{label}}}" if label else ""
         return ("\\clearpage\n" if new_page else "") + f"\\section{{{text}}}{label_text}\n"
 
@@ -468,7 +468,7 @@ class StructureRenderer:
 
     def requirement_section(self, section: RequirementSection) -> str:
         requirement = section.requirement
-        heading = self.report.process_text(f"{requirement.req_id}: {requirement.title}")
+        heading = self.report.heading_text(f"{requirement.req_id}: {requirement.title}")
         parts = [
             # Keep the heading with its Area/Parent/Verified by/Risks lines.
             f"\\needspace{{4\\baselineskip}}\\subsection{{{heading}}}\\label{{{requirement.req_id}}}\n",
@@ -538,7 +538,7 @@ class StructureRenderer:
 
     def tier1_chapter(self, chapter: Tier1Chapter) -> str:
         tier1 = chapter.tier1
-        heading = self.report.process_text(f"{tier1.req_id}: {tier1.title}")
+        heading = self.report.heading_text(f"{tier1.req_id}: {tier1.title}")
         parts = [
             f"\\clearpage\n\\section{{{heading}}}\\label{{{tier1.req_id}}}\n",
             self.report.md_to_latex(chapter.statement),
@@ -672,7 +672,7 @@ class StructureRenderer:
             "EU GMP Annex 11) can start here.\n",
         ]
         for doc in self.document.requirements:
-            parts.append(f"\\subsection{{{self.report.process_text(doc.title)}}}\n")
+            parts.append(f"\\subsection{{{self.report.heading_text(doc.title)}}}\n")
             if doc.source_path:
                 parts.append(f"{{\\footnotesize Source file: \\texttt{{{breakable(doc.source_path)}}}\\par}}\n")
             if doc.generic_content:
@@ -702,7 +702,7 @@ class StructureRenderer:
             parts.append("\\subsection{Test documents}\n")
             parts.append("The introductions of the test files, which describe how each area is tested.\n\n")
             for doc in tests_with_prose:
-                parts.append(f"\\subsubsection*{{{self.report.process_text(doc.title)}}}\n")
+                parts.append(f"\\subsubsection*{{{self.report.heading_text(doc.title)}}}\n")
                 if doc.source_path:
                     parts.append(f"{{\\footnotesize Source file: \\texttt{{{breakable(doc.source_path)}}}\\par}}\n")
                 parts.append(self.report.md_to_latex(self._demoted(doc.generic_content)) + "\n\n")

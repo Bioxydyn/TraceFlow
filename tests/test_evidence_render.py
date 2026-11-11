@@ -227,9 +227,12 @@ def _report(tmp_path: Path, results: Optional[Path] = None) -> PdfReport:
 def test_process_text_escapes_tilde_backslash_and_code_spans() -> None:
     latex = PdfReport.process_text_impl(r"~18 C:\Users `a\b_c/d REQ-1 {x}` REQ-1", {"REQ-1"})
     assert latex.startswith(r"\textasciitilde{}18 C:\textbackslash{}Users ")
-    # Inside a code span every special character is escaped, it may break after / and _,
-    # and an ID is not turned into a link.
-    assert r"\texttt{a\textbackslash{}b\_\allowbreak{}c/\allowbreak{}d REQ-\allowbreak{}1 \{x\}}" in latex
+    # Inside a code span every special character is escaped and it may break after / and _;
+    # a known ID stays a link, as it was before code spans became breakable.
+    assert (
+        r"\texttt{a\textbackslash{}b\_\allowbreak{}c/\allowbreak{}d \mbox{\hyperref[REQ-1]{\textbf{REQ-1}}} \{x\}}"
+        in latex
+    )
     # A linked ID outside code sits in an \mbox, so it is never hyphenated.
     assert latex.endswith(r"\mbox{\hyperref[REQ-1]{\textbf{REQ-1}}}")
 
@@ -672,3 +675,44 @@ def test_cli_volume_errors_exit_1(tmp_path: Path, capsys: pytest.CaptureFixture[
     )
     assert rc == 1
     assert "No volume `E09`" in capsys.readouterr().err
+
+
+# ------------------------------------------------------------------ end-to-end review fixes
+
+
+def test_code_span_keeps_links_to_known_ids(tmp_path: Path) -> None:
+    report = _report(tmp_path)
+    report.unique_ids = {"REQ-VF-T1-009"}
+    latex = report.md_to_latex(parse_markdown("children of `REQ-VF-T1-009: Reporting, live` and `PW-X_1`."))
+    # The ID keeps its link (as before code spans became breakable); the rest is escaped and breakable.
+    assert r"\texttt{\mbox{\hyperref[REQ-VF-T1-009]{\textbf{REQ-VF-T1-009}}}:\allowbreak{} Reporting," in latex
+    assert r"\texttt{PW-\allowbreak{}X\_\allowbreak{}1}" in latex
+    # With no known IDs (an evidence volume) a code span is exactly the breakable form.
+    assert PdfReport.code_span_latex("REQ-VF-T1-009: a/b", set()) == (
+        r"\texttt{REQ-\allowbreak{}VF-\allowbreak{}T1-\allowbreak{}009:\allowbreak{} a/\allowbreak{}b}"
+    )
+
+
+def test_heading_with_linked_ids_has_a_plain_bookmark(tmp_path: Path) -> None:
+    report = _report(tmp_path)
+    report.unique_ids = {"REQ-VOX-UPLOAD-001"}
+    heading = report.heading_text("REQ-VOX-UPLOAD-001: Upload a scan")
+    # The printed heading is unchanged; the PDF bookmark reads "REQ-VOX-UPLOAD-001: Upload a scan",
+    # not "[REQ-VOX-UPLOAD-001]REQ-VOX-UPLOAD-001: Upload a scan".
+    assert heading == (
+        r"\texorpdfstring{\mbox{\hyperref[REQ-VOX-UPLOAD-001]{\textbf{REQ-VOX-UPLOAD-001}}}: Upload a scan}"
+        r"{REQ-VOX-UPLOAD-001: Upload a scan}"
+    )
+    assert report.heading_text("Upload Requirements") == "Upload Requirements"
+    latex = report.md_to_latex(parse_markdown("## REQ-VOX-UPLOAD-001: Upload a scan"))
+    assert latex.startswith(r"\subsection{\texorpdfstring{\mbox{\hyperref[REQ-VOX-UPLOAD-001]")
+
+
+def test_default_render_headings_get_plain_bookmarks(tmp_path: Path, fake_latex: _FakeLatex) -> None:
+    corpus, results = _corpus_with_results(tmp_path)
+    report = PdfReport(process_directory(str(corpus), version="1.0"), test_results_dir=str(results))
+    report.render(include_design=False, include_supplementary=False, work_dir=str(tmp_path / "work"))
+    assert r"\subsection{\texorpdfstring{\mbox{\hyperref[REQ-VOX-UPLOAD-001]{\textbf{REQ-VOX-UPLOAD-001}}}: " in (
+        fake_latex.tex
+    )
+    assert re.search(r"\\subsection\{\\mbox\{\\hyperref", fake_latex.tex) is None

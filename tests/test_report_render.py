@@ -110,7 +110,7 @@ def test_hierarchy_report_has_tier1_chapters_and_every_item_once(tmp_path: Path,
     assert "\\textbf{Risks:} \\hyperref[RISK-VOX-001]" in audit
     assert "Area: Families" in audit
     # Shells under their requirement, a level lower, with reference rows.
-    assert "\\subsubsection{\\mbox{\\hyperref[TEST-VOX-AUDITLOG-001]" in tex
+    assert "\\subsubsection{\\texorpdfstring{\\mbox{\\hyperref[TEST-VOX-AUDITLOG-001]" in tex
     assert "\\mbox{BXD-VF-019-E02} \\mbox{p.~" in tex
     # Order: journey shells come after the derived table and before the Tier 2 statements.
     t1 = tex.split("\\label{REQ-VF-T1-001}")[1].split("\\label{REQ-VF-T1-002}")[0]

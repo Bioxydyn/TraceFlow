@@ -270,12 +270,52 @@ class PdfReport():
 
         # 5. Put the code spans back.
         return _CODE_SPAN_PLACEHOLDER.sub(
-            lambda match: breakable_code(code_spans[int(match.group(1))], PdfReport._UNICODE_LATEX_REPLACEMENTS),
+            lambda match: PdfReport.code_span_latex(code_spans[int(match.group(1))], unique_ids),
             new_text,
         )
 
+    @staticmethod
+    def code_span_latex(text: str, unique_ids: set[str]) -> str:
+        r"""A code span: ``\texttt``, escaped and breakable after ``/ . _ : -``.
+
+        A known ID inside the span is still a link, as it was before code spans became
+        breakable (``REQ-VF-T1-009: Reporting`` in backticks links REQ-VF-T1-009).
+        """
+        replacements = PdfReport._UNICODE_LATEX_REPLACEMENTS
+        if not unique_ids:
+            return breakable_code(text, replacements)
+        pieces: list[str] = []
+        for token in re.split(r"(\s+)", text):
+            if not token or token.isspace():
+                pieces.append(token)
+                continue
+            leading = len(token) - len(token.lstrip("()[]{}.,;:<>"))
+            trailing = len(token.rstrip("()[]{}.,;:<>"))
+            core = token[leading:trailing] if trailing > leading else ""
+            identifier = core.replace(":", "")
+            if core and identifier in unique_ids:
+                pieces.append(
+                    breakable(token[:leading], replacements=replacements)
+                    + f"\\mbox{{\\hyperref[{identifier}]{{\\textbf{{{latex_escape(core)}}}}}}}"
+                    + breakable(token[trailing:], replacements=replacements)
+                )
+            else:
+                pieces.append(breakable(token, replacements=replacements))
+        return "\\texttt{" + "".join(pieces) + "}"
+
     def process_text(self, text: str) -> str:
         return self.process_text_impl(text, self.unique_ids)
+
+    def heading_text(self, text: str) -> str:
+        """``text`` for a heading. When it links IDs, the PDF bookmark gets the plain words.
+
+        Without the plain form hyperref turns ``\\hyperref[REQ-X]{REQ-X}`` into the bookmark
+        ``[REQ-X]REQ-X``. The printed heading and the contents entry are unchanged.
+        """
+        latex_text = self.process_text(text)
+        if "\\hyperref" not in latex_text:
+            return latex_text
+        return f"\\texorpdfstring{{{latex_text}}}{{{self.process_text_impl(text, set())}}}"
 
     @staticmethod
     def _build_label_from_text(prefix: str, text: str) -> str:
@@ -444,7 +484,7 @@ class PdfReport():
         elif doc.category not in {"general", "design"}:
             heading = f"{doc.category.title()} - {doc.title}"
         label = self._build_label_from_text(doc.category or "doc", doc.title)
-        latex = "\\section{" + self.process_text(heading) + "}\\label{" + label + "}\n\n"
+        latex = "\\section{" + self.heading_text(heading) + "}\\label{" + label + "}\n\n"
         latex += self.md_to_latex(doc.content)
         latex += "\n\n\\newpage\n\n"
         return latex
@@ -689,7 +729,7 @@ class PdfReport():
 
     def render_risk_document(self, risk_page: RiskDocument) -> str:
         label = self._build_label_from_text("risk", risk_page.title)
-        latex = "\\section{" + self.process_text(risk_page.title) + "}\\label{" + label + "}\n\n"
+        latex = "\\section{" + self.heading_text(risk_page.title) + "}\\label{" + label + "}\n\n"
         latex += self.md_to_latex(risk_page.generic_content)
         latex += "\n\n"
         latex += self.build_risk_register(risk_page)
@@ -714,7 +754,7 @@ class PdfReport():
         def handle_heading(item: dict) -> str:
             level = item["level"]
             command = "\\" + "sub" * (level - 1) + "section" + ("*" if item.get("_unnumbered") else "")
-            return command + "{" + self.process_text(item["children"][0]["text"]) + "}"
+            return command + "{" + self.heading_text(item["children"][0]["text"]) + "}"
 
         def handle_list(item: dict) -> str:
             latex = ["\\begin{itemize}"]
@@ -944,7 +984,7 @@ class PdfReport():
                 "strong": lambda item: f"\\textbf{{{self.process_text(item['children'][0]['text'])}}}",
                 "emphasis": lambda item: f"\\emph{{{self.process_text(item['children'][0]['text'])}}}",
                 "softbreak": lambda _: "\n",
-                "codespan": lambda item: breakable_code(item["text"], self._UNICODE_LATEX_REPLACEMENTS),
+                "codespan": lambda item: self.code_span_latex(item["text"], self.unique_ids),
                 "raw_latex": lambda item: item.get("text", ""),
                 "linebreak": lambda _: "\n",
             }
@@ -1766,7 +1806,7 @@ class PdfReport():
 
     def _render_shell(self, test: "Test", *, command: str = "subsection") -> str:
         """A test shell: its heading (with the shell's label) and its content."""
-        heading = "\\" + command + "{" + self.process_text(test.test_id + ": " + test.title) + "}"
+        heading = "\\" + command + "{" + self.heading_text(test.test_id + ": " + test.title) + "}"
         heading += "\\label{" + test.test_id + "}\n\n"
         self._current_shell_id = test.test_id
         self._reference_rows_in_shell = 0
@@ -2299,7 +2339,7 @@ class PdfReport():
                 if include_requirements_section:
                     for req_page in self.document.requirements:
                         section_label = self._build_label_from_text("requirements", req_page.title)
-                        document += "\\section{" + self.process_text(req_page.title) + "}\\label{" + section_label + "}\n\n"  # noqa E501
+                        document += "\\section{" + self.heading_text(req_page.title) + "}\\label{" + section_label + "}\n\n"  # noqa E501
                         document += self.md_to_latex(req_page.generic_content)
 
                         if matrix_style == "list":
@@ -2309,7 +2349,7 @@ class PdfReport():
 
                         separator = "\\vspace{0.15cm}\n\\noindent\\rule{\\linewidth}{0.4pt}\n\\vspace{0.15cm}\n\n"
                         for requirement_index, requirement in enumerate(req_page.items):
-                            document += "\\subsection{" + self.process_text(requirement.req_id + ": " + requirement.title) + "}"  # noqa E501
+                            document += "\\subsection{" + self.heading_text(requirement.req_id + ": " + requirement.title) + "}"  # noqa E501
                             document += "\\label{" + requirement.req_id + "}\n\n"
 
                             # TF-06: one breakable, linked "Verified by:" line, not one run-on
@@ -2328,7 +2368,7 @@ class PdfReport():
                 if include_tests_section:
                     for test_page in self.document.tests:
                         section_label = self._build_label_from_text("tests", test_page.title)
-                        document += "\\section{" + self.process_text(test_page.title) + "}\\label{" + section_label + "}\n\n"  # noqa E501
+                        document += "\\section{" + self.heading_text(test_page.title) + "}\\label{" + section_label + "}\n\n"  # noqa E501
                         document += self.md_to_latex(test_page.generic_content)
 
                         separator = "\\vspace{0.15cm}\n\\noindent\\rule{\\linewidth}{0.4pt}\n\\vspace{0.15cm}\n\n"
