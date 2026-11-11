@@ -253,10 +253,13 @@ class StructureRenderer:
     def how_to_read(self, version: str) -> str:
         reference = self.report.evidence_mode == "reference"
         report = latex_escape(f"{self.report_code} {version}".strip()) or "this report"
+        # With a volume manifest the chapters follow it, volume by volume, which need not be the
+        # numeric order of the Tier 1 IDs (E04 may hold T1-005 and T1-010).
+        order = "the order of the evidence volumes" if self.plan is not None else "Tier 1 order"
         parts = [
             self._section("How to read this report", "how-to-read", new_page=False),
             "This report is laid out by the requirement hierarchy. Each Tier 1 requirement has a chapter, in "
-            "Tier 1 order, holding:\n",
+            f"{order}, holding:\n",
             "\\begin{itemize}",
             "\\item the Tier 1 statement, with its source in the Intended Use Statement where one is given;",
             "\\item a table of the requirements derived from it: area, test shells, evidence passed out of "
@@ -268,11 +271,15 @@ class StructureRenderer:
             "\\end{itemize}",
         ]
         if reference:
+            # The example cites a volume the way the rows do: its full code.
+            volumes = sorted({str(entry.get("volume", "")) for entry in self.report.evidence_index.values()} - {""})
+            example = f"\\mbox{{{latex_escape(volumes[0])}}} p.~14" if volumes else "E03 p.~14"
             parts.append(
                 "Each bound evidence record is one row: its ID, status, kind, what it asserted for that shell's "
                 "requirements, and where the full record is printed, as an evidence-volume code and page "
-                "(\\textit{E03 p.~14}). The volumes print each record once: provenance, description, "
-                "assertions, output and figures. A record bound by several shells is a row under each.\n"
+                f"(for example \\textit{{{example}}}). The volumes print each record once: provenance, "
+                "description, assertions, output and figures. A record bound by several shells is a row under "
+                "each.\n"
             )
         else:
             parts.append("Each bound evidence record is printed in full under the shell that binds it.\n")

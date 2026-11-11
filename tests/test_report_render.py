@@ -517,3 +517,11 @@ def test_risk_trace_lists_volumes_in_manifest_order(tmp_path: Path, fake_latex: 
     trace = fake_latex.tex.split("\\section{Risk trace}")[1].split("\\section{Appendix A")[0]
     row = next(line for line in trace.splitlines() if "\\label{RISK-VOX-001}" in line)
     assert row.endswith("& \\mbox{E01}, \\mbox{E02} \\\\")
+
+
+def test_how_to_read_matches_the_chapter_order_and_row_format(tmp_path: Path, fake_latex: _FakeLatex) -> None:
+    _render_hierarchy(tmp_path)
+    how = fake_latex.tex.split("\\section{How to read this report}")[1].split("\\section{Release results}")[0]
+    # Chapters follow the manifest's volumes, and the example cites a volume as the rows do.
+    assert "a chapter, in the order of the evidence volumes, holding" in how
+    assert "(for example \\textit{\\mbox{BXD-VF-019-E01} p.~14})" in how
