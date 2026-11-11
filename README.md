@@ -105,10 +105,82 @@ Expected folder structure:
 test-results/
   TEST-ID/
     result.md
+    result.json      # optional typed record (schema 1)
     screenshots/
       screenshot-001.png
       ...
 ```
+
+`traceflow.evidence.load_evidence_record(folder, id)` reads one result as a typed
+`EvidenceRecord` (kind, status, workflow, run ID and URL, head SHA, source, duration,
+description, assertions with requirement IDs and rows, figures with SHA-256 and size, output
+lines). It uses `result.json` when present and maps `result.md` onto the same fields
+otherwise. A `result.json` figure hash that does not match the file, a missing figure, or a
+status that disagrees with `result.md` fails the load.
+
+### Project configuration (`config.yml`)
+
+An optional `config.yml` in the input directory can set:
+
+```yaml
+name: VoxelFlow
+# Files are read in sorted path order (case-insensitive). Globs listed here come first,
+# in this order; a glob that matches no Markdown file is an error.
+order:
+  - requirements/VoxelFlow Tier 1 Requirements.md
+  - tests/VoxelFlow Tier 1 Tests.md
+# Only H2 headings whose first word matches this become requirement/test/risk items; other
+# H2 sections stay prose. This is the default.
+item_id_pattern: '^(REQ|TEST|RISK)-[A-Z0-9-]+'
+# Present => the requirement hierarchy is checked when the directory is parsed.
+hierarchy:
+  top_level_prefix: REQ-VF-T1-      # Tier 1 IDs
+  require_single_parent: true       # every other requirement: exactly one Tier 1 parent
+  procedural_files:                 # parentless requirement files (globs)
+    - requirements/Procedural Controls.md
+```
+
+Requirements name their parent with a `Parent: REQ-...` line. With `hierarchy:` set, the
+parse fails on an unknown parent, a self-parent, a cycle, a `Parent:` line naming no ID, a
+Tier 1 with a parent, and (with `top_level_prefix`) a requirement that does not trace to a
+Tier 1, or does not have exactly one Tier 1 parent when `require_single_parent` is set.
+
+### Evidence volumes
+
+A large traceability report can be issued with evidence volumes, each holding whole Tier 1s.
+A volume manifest names them:
+
+```yaml
+structure_revision: 1
+report: {code: BXD-VF-019, title: Requirements, Tests and Risk Traceability Report}
+tier1_prefix: REQ-VF-T1-          # optional when config.yml sets hierarchy.top_level_prefix
+require_single_parent: true       # optional
+procedural_files: []              # optional, merged with config.yml's
+regulatory_families: [REQ-VOX-21CFR11-*, REQ-VOX-ANNEX11-*]   # the default
+volumes:
+  - code: BXD-VF-019-E01
+    slug: ingestion
+    title: Data Ingestion, De-identification and Upload Portals
+    audience: Sponsor data managers
+    tier1: [REQ-VF-T1-001, REQ-VF-T1-002]
+    max_pages: 150
+    max_mb: 10
+    homes:                          # optional overrides: evidence ID -> home shell (or null)
+      PW-TEST-VOX-UPLOAD-016: TEST-VOX-UPLOAD-016
+```
+
+Each shell goes to the volume of its requirements' Tier 1, and each evidence record has one
+home: a functional Tier 2 shell, else a shell whose requirements are all in a regulatory
+family, else a Tier 1 journey shell; ties go to manifest order. Check a manifest with:
+
+    traceflow path/to/project-docs --check-volumes volumes.yml
+
+It parses the whole directory, prints the ID-to-volume map as JSON on stdout and exits 1 if
+a Tier 1 is unassigned or in two volumes, a shell or requirement spans two volumes, a record
+has no home, or an override is invalid. `tests/fixtures/voxelflow-volumes-10-tier1.yml` is an
+example. From Python, `traceflow.volumes.plan_volumes(document, load_manifest(path))` returns
+the same plan, with `layout(volume)` giving each volume's Tier 1 groups, shells, home records
+and pointer records.
 
 ### Requirements
 ```
