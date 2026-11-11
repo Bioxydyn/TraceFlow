@@ -42,6 +42,7 @@ from traceflow.evidence_render import (
 from traceflow.parser import (
     Document,
     EvidenceBinding,
+    HierarchyConfig,
     MarkdownDocument,
     RequirementDocument,
     RiskDocument,
@@ -51,8 +52,13 @@ from traceflow.report_latex import StructureRenderer
 from traceflow.report_structure import (
     DEFAULT_DATE_FORMAT,
     MATRIX_STYLES,
+    STRUCTURES,
+    DocumentSet,
+    DocumentSetError,
     check_commit,
+    document_set_errors,
     generated_date,
+    plan_hierarchy,
     source_date_epoch,
 )
 from traceflow.version import __version__
@@ -1617,7 +1623,11 @@ class PdfReport():
 
     def _evidence_bindings(self) -> dict[str, EvidenceBinding]:
         if self._bindings is None:
-            hierarchy = self._volume[0].hierarchy if self._volume is not None else self.document.hierarchy
+            hierarchy: Optional[HierarchyConfig] = self.document.hierarchy
+            if self._volume is not None:
+                hierarchy = self._volume[0].hierarchy
+            elif self._report_plan is not None:
+                hierarchy = self._report_plan.hierarchy
             self._bindings = self.document.evidence_bindings(hierarchy)
         return self._bindings
 
@@ -1838,6 +1848,8 @@ class PdfReport():
         self._volume: Optional[tuple["VolumePlan", "VolumeSpec"]] = None
         self._volume_shells: set[str] = set()
         self._toc_depth: Optional[int] = None
+        # The volume plan of a hierarchy report (``render(volume_plan=...)``).
+        self._report_plan: Optional["VolumePlan"] = None
         self._reset_evidence_state()
 
     @staticmethod
@@ -1884,6 +1896,8 @@ class PdfReport():
         cover_engineer: Optional[str] = None,
         generated_date_text: Optional[str] = None,
         footer_left: Optional[str] = None,
+        after_cover: str = "",
+        cover_note: str = "",
     ) -> tuple[str, str, str]:
         """The rendered ``report-header.tex``, and the left and right logo file names.
 
@@ -1893,7 +1907,9 @@ class PdfReport():
         ``cover_version`` / ``cover_engineer``: ``None`` prints the row blank (today's cover,
         filled in by hand), ``""`` leaves the row out, any other text fills it.
         ``generated_date_text`` replaces LaTeX's ``\\today``; ``footer_left`` (LaTeX) replaces
-        the footer's "<code> | Report produced using TraceFlow <version>".
+        the footer's "<code> | Report produced using TraceFlow <version>"; ``after_cover``
+        (LaTeX) is printed after the cover, before the contents; ``cover_note`` (LaTeX) under
+        the cover's sign-off.
         """
         header = _latex_jinja2_env.from_string(
             load_resource("traceflow.res", "report-header.tex").decode("utf-8")
@@ -1923,6 +1939,8 @@ class PdfReport():
             if footer_left is not None
             else "\\traceflowdocumentcode{} | Report produced using TraceFlow " + __version__
         )
+        tex_vars["after_cover"] = after_cover
+        tex_vars["cover_note"] = cover_note
         top_left_logo_name = PdfReport._logo_basename(self.top_left_logo_path, "traceflow-logo.png")
         # An empty right-logo name suppresses the header's right slot entirely
         # (the template guards on it); otherwise it falls back to the bundled logo.
@@ -2094,26 +2112,37 @@ class PdfReport():
         toc_depth: Optional[int] = None,
         work_dir: Optional[str] = None,
         strict_references: bool = False,
+        structure: str = "files",
+        matrix_style: Optional[str] = None,
+        volume_plan: Optional["VolumePlan"] = None,
+        document_set: Optional[DocumentSet] = None,
         cover_version: Optional[str] = None,
         cover_engineer: Optional[str] = None,
         commit: Optional[str] = None,
         date_format: Optional[str] = None,
-        matrix_style: str = "tick",
+        risk_register_ref: Optional[str] = None,
     ) -> bytes:
         """Render the report. The defaults reproduce today's structure.
 
-        - ``matrix_style``: "tick" (the tick matrices, as today) or "list" (a portrait
-          longtable per requirement file: Requirement | Title | Parent | Verified by | Evidence
-          passed/bound | Risks).
+        Structure (all opt-in):
 
-        Cover and footer (all opt-in):
-
+        - ``structure``: "files" (one section per source file, as today) or "hierarchy" (one
+          chapter per Tier 1, see ``traceflow.report_structure``). The hierarchy needs a Tier 1
+          prefix, from ``volume_plan`` or ``config.yml``; it always uses list matrices, a risk
+          trace table instead of the register, and defaults ``toc_depth`` to 1.
+        - ``matrix_style``: "tick" (A3 tick matrices, the files default) or "list" (a portrait
+          longtable per requirement file).
+        - ``volume_plan``: the evidence-volume plan; gives the hierarchy its Tier 1 order and
+          each requirement its volume.
+        - ``document_set``: the files issued with this report, printed as a table after the
+          cover (checked against ``volume_plan``, ``evidence_index`` and ``commit``).
         - ``cover_version`` / ``cover_engineer``: ``None`` keeps the blank row, ``""`` drops it.
         - ``commit``: the product commit; the footer becomes "<code> | <name> <version>
-          (<commit12>) | TraceFlow <version>".
-        - ``date_format``: print the generation date with this strftime format; otherwise
-          LaTeX's ``\\today``. ``SOURCE_DATE_EPOCH`` fixes the date and the PDF's ID and
-          timestamps.
+          (<commit12>) | TraceFlow <version>" (the hierarchy uses that footer without it too).
+        - ``date_format``: print the generation date with this strftime format (the hierarchy
+          defaults to "%d %B %Y"); otherwise LaTeX's ``\\today``. ``SOURCE_DATE_EPOCH`` fixes
+          the date and the PDF's ID and timestamps.
+        - ``risk_register_ref``: where the risk trace table says the full register is.
 
         Evidence:
 
@@ -2139,16 +2168,48 @@ class PdfReport():
             raise ValueError("evidence_mode `reference` needs an evidence index")
         if toc_depth is not None and not 0 <= toc_depth <= 5:
             raise ValueError("toc_depth must be between 0 and 5")
+        if structure not in STRUCTURES:
+            raise ValueError(f"structure must be one of {STRUCTURES}, not `{structure}`")
+        hierarchy_mode = structure == "hierarchy"
+        if matrix_style is None:
+            matrix_style = "list" if hierarchy_mode else "tick"
         if matrix_style not in MATRIX_STYLES:
             raise ValueError(f"matrix_style must be one of {MATRIX_STYLES}, not `{matrix_style}`")
+        if hierarchy_mode and matrix_style != "list":
+            raise ValueError("structure `hierarchy` always prints list matrices (its derived-requirements tables)")
+        if hierarchy_mode and not (include_requirements and include_tests):
+            raise ValueError("structure `hierarchy` needs the requirements and the tests")
+        if hierarchy_mode and toc_depth is None:
+            toc_depth = 1
         commit = check_commit(commit)
-        date_text = generated_date(date_format) if date_format else None
-        footer = self._release_footer(commit) if commit else None
+        if document_set is not None:
+            problems = document_set_errors(
+                document_set,
+                volume_codes=[spec.code for spec in volume_plan.manifest.volumes] if volume_plan else None,
+                index=evidence_index if evidence_mode == "reference" else None,
+                commit=commit,
+                report_code=document_code or "",
+            )
+            if problems:
+                raise DocumentSetError(f"Document set {document_set.path} disagrees with this render:\n  - "
+                                       + "\n  - ".join(problems))
+        layout = None
+        if hierarchy_mode:
+            layout = plan_hierarchy(
+                self.document,
+                volume_plan.hierarchy if volume_plan is not None else None,
+                tier1_order=volume_plan.manifest.tier1_order() if volume_plan is not None else None,
+            )
+        date_text = (
+            generated_date(date_format or DEFAULT_DATE_FORMAT) if (date_format or hierarchy_mode) else None
+        )
+        footer = self._release_footer(commit) if (commit or hierarchy_mode) else None
         # Resolved now: the build runs inside the work directory.
         index_out_path = os.path.abspath(evidence_index_out) if evidence_index_out is not None else None
         original_unique_ids = self.unique_ids
         original_traceability_a3 = self.traceability_a3
         original_options = self._evidence_options()
+        original_plan = self._report_plan
         selected_unique_ids = self._collect_unique_ids(
             include_risks=include_risks,
             include_requirements=include_requirements,
@@ -2161,11 +2222,28 @@ class PdfReport():
         self.dedupe_evidence = dedupe_evidence and evidence_mode == "inline"
         self.evidence_bound_by = evidence_bound_by
         self.evidence_index = dict(evidence_index or {})
-        self._label_records = evidence_index_out is not None
+        # The hierarchy's evidence index appendix cites inline records by their ``ev:`` label.
+        self._label_records = evidence_index_out is not None or (hierarchy_mode and evidence_mode == "inline")
         self._toc_depth = toc_depth
+        self._report_plan = volume_plan
         self._reset_evidence_state()
         try:
-            structure_latex = StructureRenderer(self, report_code=document_code or "")
+            structure_latex = StructureRenderer(
+                self,
+                layout=layout,
+                plan=volume_plan,
+                document_set=document_set,
+                report_code=document_code or (volume_plan.manifest.report_code if volume_plan else ""),
+                commit=commit,
+                result_text=cover_result or "",
+                risk_register_ref=risk_register_ref or "",
+            )
+            after_cover = structure_latex.document_set_table(self.document.version) if document_set else ""
+            cover_note = (
+                "Approval of this report covers it and every document listed, with its SHA-256, in the "
+                "document-set table that follows this page."
+                if document_set and include_cover_page else ""
+            )
             default_title = self.document.name + " " + self.document.version + ": Validation Pack"
             document, top_left_logo_name, top_right_logo_name = self._header_latex(
                 report_title=report_title or default_title,
@@ -2185,6 +2263,8 @@ class PdfReport():
                 cover_engineer=cover_engineer,
                 generated_date_text=date_text,
                 footer_left=footer,
+                after_cover=after_cover,
+                cover_note=cover_note,
             )
 
             build_dir = work_dir or "report"
@@ -2195,6 +2275,15 @@ class PdfReport():
                 if self.dedupe_evidence and include_tests:
                     self._evidence_homes = self._inline_evidence_homes()
 
+                if hierarchy_mode:
+                    document += structure_latex.front_matter(self.document.version)
+                    include_risks_section = False
+                    include_requirements_section = include_tests_section = False
+                else:
+                    include_risks_section = include_risks
+                    include_requirements_section = include_requirements
+                    include_tests_section = include_tests
+
                 if include_design:
                     for design_doc in self.document.design_documents:
                         document += self.render_markdown_document(design_doc)
@@ -2203,11 +2292,11 @@ class PdfReport():
                     for supplementary_doc in self.document.supplementary_documents:
                         document += self.render_markdown_document(supplementary_doc)
 
-                if include_risks:
+                if include_risks_section:
                     for risk_page in self.document.risks:
                         document += self.render_risk_document(risk_page)
 
-                if include_requirements:
+                if include_requirements_section:
                     for req_page in self.document.requirements:
                         section_label = self._build_label_from_text("requirements", req_page.title)
                         document += "\\section{" + self.process_text(req_page.title) + "}\\label{" + section_label + "}\n\n"  # noqa E501
@@ -2236,7 +2325,7 @@ class PdfReport():
 
                         document += "\\newpage\n\n"
 
-                if include_tests:
+                if include_tests_section:
                     for test_page in self.document.tests:
                         section_label = self._build_label_from_text("tests", test_page.title)
                         document += "\\section{" + self.process_text(test_page.title) + "}\\label{" + section_label + "}\n\n"  # noqa E501
@@ -2249,6 +2338,14 @@ class PdfReport():
                                 document += separator
 
                         document += "\\newpage\n\n"
+
+                if hierarchy_mode:
+                    document += structure_latex.chapters()
+                    document += structure_latex.procedural_chapter()
+                    if include_risks:
+                        document += structure_latex.risk_trace()
+                    document += structure_latex.area_appendix()
+                    document += structure_latex.evidence_index_appendix()
 
                 if self._missing_index_ids:
                     raise EvidenceIndexError(
@@ -2272,6 +2369,7 @@ class PdfReport():
         finally:
             self.unique_ids = original_unique_ids
             self.traceability_a3 = original_traceability_a3
+            self._report_plan = original_plan
             self._restore_evidence_options(original_options)
 
     def _evidence_options(self) -> tuple:

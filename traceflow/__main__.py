@@ -7,7 +7,7 @@ from cyclopts import App, Parameter
 from traceflow.evidence_render import EvidenceIndexError, default_index_path, load_evidence_index
 from traceflow.parser import process_directory, Document
 from traceflow.pdf_generator import PdfReport
-from traceflow.report_structure import check_commit
+from traceflow.report_structure import DocumentSetError, HierarchyError, check_commit, load_document_set
 from traceflow.version import __version__
 from traceflow.volumes import (
     ManifestError,
@@ -216,7 +216,8 @@ def _run(
         Optional[str],
         Parameter(
             name="--volume-manifest",
-            help="Volume manifest (YAML) for --render-mode evidence-volume.",
+            help="Volume manifest (YAML): the volumes of --render-mode evidence-volume, or, with "
+            "--structure hierarchy, the Tier 1 order and each requirement's evidence volume.",
         ),
     ] = None,
     volume: Annotated[
@@ -247,26 +248,55 @@ def _run(
         Parameter(
             name="--commit",
             help="The product commit under test (7-40 hex). The footer then reads "
-            "'<code> | <name> <VERSION> (<commit12>) | TraceFlow <version>'.",
+            "'<code> | <name> <VERSION> (<commit12>) | TraceFlow <version>', and the CI run register marks "
+            "records from other commits.",
         ),
     ] = None,
     date_format: Annotated[
         Optional[str],
         Parameter(
             name="--date-format",
-            help="strftime format of the generation date on the cover (for example '%d %B %Y'). "
-            "Evidence volumes default to '%d %B %Y'; otherwise LaTeX's \\today. "
+            help="strftime format of the generation date on the cover (for example '%d %B %Y'). The "
+            "hierarchy report and evidence volumes default to '%d %B %Y'; otherwise LaTeX's \\today. "
             "SOURCE_DATE_EPOCH, when set, fixes the date and the PDF's ID and timestamps.",
         ),
     ] = None,
+    structure: Annotated[
+        Literal["files", "hierarchy"],
+        Parameter(
+            name="--structure",
+            help="'files' (default): one section per source file. 'hierarchy': one chapter per Tier 1 "
+            "(statement, derived-requirements table, journey shells, each derived requirement with its "
+            "shells), then procedural requirements, the risk trace table and the appendices. Needs a Tier 1 "
+            "prefix (config.yml hierarchy.top_level_prefix or --volume-manifest).",
+        ),
+    ] = "files",
     matrix_style: Annotated[
-        Literal["tick", "list"],
+        Optional[Literal["tick", "list"]],
         Parameter(
             name="--matrix-style",
-            help="'tick' (default): the tick matrices. 'list': a portrait longtable per requirement file "
-            "(Requirement | Title | Parent | Verified by | Evidence | Risks) that repeats its header.",
+            help="'tick' (default for --structure files): the tick matrices. 'list': a portrait longtable per "
+            "requirement file (Requirement | Title | Parent | Verified by | Evidence | Risks). The hierarchy "
+            "structure always lists.",
         ),
-    ] = "tick",
+    ] = None,
+    document_set_file: Annotated[
+        Optional[str],
+        Parameter(
+            name="--document-set-file",
+            help="Document-set JSON: the files issued with this report (code, title, tier1, pages, records, "
+            "sha256), printed as a table after the cover. Checked against --volume-manifest, the evidence "
+            "indexes and --commit.",
+        ),
+    ] = None,
+    risk_register_ref: Annotated[
+        Optional[str],
+        Parameter(
+            name="--risk-register-ref",
+            help="With --structure hierarchy: where the risk trace table says the full register is "
+            "(for example 'BXD-VF-020').",
+        ),
+    ] = None,
     toc_depth: Annotated[
         Optional[int],
         Parameter(
@@ -316,6 +346,13 @@ def _run(
         volume_manifest=volume_manifest,
         volume=volume,
         toc_depth=toc_depth,
+    ) or _structure_usage_error(
+        render_mode=render_mode,
+        structure=structure,
+        volume_manifest=volume_manifest,
+        matrix_style=matrix_style,
+        document_set_file=document_set_file,
+        risk_register_ref=risk_register_ref,
     )
     if not usage_error:
         try:
@@ -327,7 +364,8 @@ def _run(
         return 2
     try:
         index = load_evidence_index(evidence_index) if evidence_index else None
-    except EvidenceIndexError as exc:
+        document_set = load_document_set(document_set_file) if document_set_file else None
+    except (EvidenceIndexError, DocumentSetError) as exc:
         sys.stderr.write(f"ERROR: {exc}\n")
         return 1
     document: Document = process_directory(directory, version=version)
@@ -384,40 +422,56 @@ def _run(
         include_requirements = False
         include_tests = False
 
-    output_file: bytes = report.render(
-        include_design=include_design,
-        include_supplementary=include_supplementary,
-        include_risks=include_risks,
-        include_requirements=include_requirements,
-        include_tests=include_tests,
-        report_title=report_title,
-        include_cover_page=not skip_front_page,
-        include_toc=not skip_toc,
-        cover_signature_boxes=cover_signature_boxes,
-        cover_no_tester=cover_no_tester,
-        cover_test_date=cover_test_date,
-        cover_result=cover_result,
-        cover_approved_usage=cover_approved_usage,
-        cover_single_signoff=cover_single_signoff,
-        no_right_logo=no_right_logo,
-        document_code=document_code,
-        document_type=document_type,
-        traceability_a3=traceability_a3,
-        evidence_layout=evidence_layout,
-        evidence_mode=evidence_mode,
-        dedupe_evidence=dedupe_evidence,
-        evidence_bound_by=evidence_bound_by,
-        evidence_index=index,
-        evidence_index_out=evidence_index_out,
-        toc_depth=toc_depth,
-        work_dir=work_dir,
-        strict_references=strict_references,
-        cover_version=cover_version,
-        cover_engineer=cover_engineer,
-        commit=commit,
-        date_format=date_format,
-        matrix_style=matrix_style,
-    )
+    plan = None
+    if volume_manifest is not None:
+        try:
+            plan = plan_volumes(document, load_manifest(volume_manifest))
+        except (ManifestError, VolumePartitionError) as exc:
+            for error in exc.errors:
+                sys.stderr.write(f"ERROR: {error}\n")
+            return 1
+    try:
+        output_file: bytes = report.render(
+            volume_plan=plan,
+            document_set=document_set,
+            evidence_index=index,
+            include_design=include_design,
+            include_supplementary=include_supplementary,
+            include_risks=include_risks,
+            include_requirements=include_requirements,
+            include_tests=include_tests,
+            report_title=report_title,
+            include_cover_page=not skip_front_page,
+            include_toc=not skip_toc,
+            cover_signature_boxes=cover_signature_boxes,
+            cover_no_tester=cover_no_tester,
+            cover_test_date=cover_test_date,
+            cover_result=cover_result,
+            cover_approved_usage=cover_approved_usage,
+            cover_single_signoff=cover_single_signoff,
+            no_right_logo=no_right_logo,
+            document_code=document_code,
+            document_type=document_type,
+            traceability_a3=traceability_a3,
+            evidence_layout=evidence_layout,
+            evidence_mode=evidence_mode,
+            dedupe_evidence=dedupe_evidence,
+            evidence_bound_by=evidence_bound_by,
+            evidence_index_out=evidence_index_out,
+            toc_depth=toc_depth,
+            work_dir=work_dir,
+            strict_references=strict_references,
+            structure=structure,
+            matrix_style=matrix_style,
+            cover_version=cover_version,
+            cover_engineer=cover_engineer,
+            commit=commit,
+            date_format=date_format,
+            risk_register_ref=risk_register_ref,
+        )
+    except (DocumentSetError, HierarchyError) as exc:
+        sys.stderr.write(f"ERROR: {exc}\n")
+        return 1
     with open(output, "wb") as f:
         f.write(output_file)
 
@@ -426,6 +480,32 @@ def _run(
         for filename in report.render_individual_pdfs(base_output, extension=extension or ".pdf"):
             print(f"Wrote individual PDF: {filename}")
     return 0
+
+
+def _structure_usage_error(
+    *,
+    render_mode: str,
+    structure: str,
+    volume_manifest: Optional[str],
+    matrix_style: Optional[str],
+    document_set_file: Optional[str],
+    risk_register_ref: Optional[str],
+) -> str:
+    """The first invalid combination of report-structure flags, or ``""``."""
+    if structure == "hierarchy" and render_mode in ("risks-only", "evidence-volume"):
+        return (
+            "--structure hierarchy needs the requirements and tests; "
+            f"it does not apply to --render-mode {render_mode}."
+        )
+    if structure == "hierarchy" and matrix_style == "tick":
+        return "--structure hierarchy always prints list matrices; drop --matrix-style tick."
+    if render_mode == "evidence-volume" and (document_set_file or matrix_style):
+        return "--document-set-file and --matrix-style do not apply to an evidence volume."
+    if volume_manifest and render_mode != "evidence-volume" and structure != "hierarchy":
+        return "--volume-manifest needs --render-mode evidence-volume or --structure hierarchy."
+    if risk_register_ref and structure != "hierarchy":
+        return "--risk-register-ref needs --structure hierarchy."
+    return ""
 
 
 def _evidence_usage_error(
@@ -443,8 +523,8 @@ def _evidence_usage_error(
         return "--render-mode evidence-volume needs --volume-manifest and --volume."
     if volume_mode and evidence_mode == "reference":
         return "--evidence-mode reference does not apply to an evidence volume."
-    if not volume_mode and (volume_manifest or volume):
-        return "--volume-manifest and --volume need --render-mode evidence-volume."
+    if not volume_mode and volume:
+        return "--volume needs --render-mode evidence-volume."
     if not volume_mode and evidence_mode == "reference" and not evidence_index:
         return "--evidence-mode reference needs at least one --evidence-index."
     if not volume_mode and evidence_index and evidence_mode != "reference":

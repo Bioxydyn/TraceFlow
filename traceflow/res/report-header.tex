@@ -310,10 +310,18 @@
 \noindent Date
 \end{minipage}
 \BLOCK{ endif }
+\BLOCK{ if cover_note }
+
+\vspace{0.4cm}
+\noindent{\small \VAR{cover_note}\par}
+\BLOCK{ endif }
 \BLOCK{ endif }
 
 \BLOCK{ if include_cover_page or include_toc }
 \newpage
+\BLOCK{ endif }
+\BLOCK{ if after_cover }
+\VAR{after_cover}
 \BLOCK{ endif }
 \BLOCK{ if include_toc }
 \tableofcontents

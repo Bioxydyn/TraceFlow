@@ -598,7 +598,7 @@ def test_evidence_volume_index_needs_every_label_placed(tmp_path: Path, monkeypa
     ("kwargs", "message"),
     [
         ({"render_mode": "evidence-volume"}, "needs --volume-manifest and --volume"),
-        ({"render_mode": "all", "volume": "E01"}, "need --render-mode evidence-volume"),
+        ({"render_mode": "all", "volume": "E01"}, "--volume needs --render-mode evidence-volume"),
         ({"render_mode": "all", "evidence_mode": "reference"}, "needs at least one --evidence-index"),
         ({"render_mode": "all", "evidence_index": ["a.json"]}, "--evidence-index needs --evidence-mode reference"),
         ({"render_mode": "all", "toc_depth": 7}, "between 0 and 5"),
