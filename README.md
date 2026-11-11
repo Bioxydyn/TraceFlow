@@ -66,6 +66,31 @@ source documents.
 Append `--skip-front-page` to omit the cover-page `Version under test` table and both signature sections.
 This is useful when those fields are completed in another system.
 
+#### Cover, footer and reproducible builds
+
+- `--cover-version TEXT` fills the cover's "Version under test" row, for example
+  `--cover-version "VoxelFlow 3.0.5 (commit c4a3b477ecdb)"`; `--cover-engineer TEXT` fills
+  "Engineer". Not given, a row stays blank to be filled in by hand (today's cover); given as `""`,
+  the row is left out.
+- `--commit SHA` (7-40 hex) names the product commit under test. The footer then reads
+  `<code> | <name> <VERSION> (<commit12>) | TraceFlow <version>` instead of
+  `<code> | Report produced using TraceFlow <version>`.
+- `--date-format FMT` prints the generation date (title block and cover) with that strftime format,
+  with English month names, for example `--date-format "%d %B %Y"` gives `11 November 2026`.
+  Without it the date is LaTeX's `\today`, as before. The hierarchy report and evidence volumes
+  use `%d %B %Y` and the release footer by default.
+- With `SOURCE_DATE_EPOCH` set (seconds since 1970, for example the commit time), every date
+  TraceFlow or pdfTeX prints or stamps comes from it (`FORCE_SOURCE_DATE=1` is passed to pdflatex),
+  the PDF trailer ID is a hash of the LaTeX source, and no `PTEX.*` file names are written, so two
+  builds of the same inputs are byte-identical, in any folder. Form-field names (manual tests) and
+  mermaid file names are derived from the input in every build.
+
+These apply in every mode, as fixes: a requirement's shells print as one breakable, linked
+`Verified by: TEST-A, TEST-B (n evidence records)` line instead of one run-on `Test ID:` line per
+shell; the Risk Register heading sits on the A3 page with its table, in `\small` type, with the Test
+Evidence IDs one per line; and a manual test's Pass/Fail/Skip row and comments box always share a
+page.
+
 ### Releasing a new version
 
 1. Bump `version` in `pyproject.toml` and `traceflow/version.py`, then run `uv lock`.
@@ -249,6 +274,68 @@ the same plan, with `layout(volume)` giving each volume's Tier 1 groups, shells,
 and pointer records.
 
 To render a volume, see [Rendering an evidence volume](#rendering-an-evidence-volume).
+
+### The signed report: `--structure hierarchy`
+
+Render the volumes first, then the report from their indexes:
+
+    traceflow path/to/project-docs 3.0.5 out/BXD-VF-019.pdf --render-mode requirements-tests-risks \
+        --structure hierarchy --volume-manifest volumes.yml \
+        --evidence-mode reference --evidence-index out/BXD-VF-019-E01.evidence-index.json [... E06] \
+        --test-results-dir results --document-set-file out/BXD-VF-019-document-set.json \
+        --document-code BXD-VF-019 --cover-version "VoxelFlow 3.0.5 (commit c4a3b477ecdb)" \
+        --commit c4a3b477ecdba56ea6b31148c56006bad3a972c9 --risk-register-ref BXD-VF-020 \
+        --strict-references --work-dir build/report
+
+`--structure hierarchy` (default `files`, one section per source file) lays the report out by the
+requirement hierarchy. It needs a Tier 1 prefix: `hierarchy.top_level_prefix` in `config.yml`, or
+a `--volume-manifest`, which also orders the chapters (manifest order) and gives each requirement
+its evidence volume. The report holds:
+
+- after the cover, the document-set table (with `--document-set-file`), then contents at depth 1
+  (`--toc-depth` overrides; PDF bookmarks go three levels deep);
+- **How to read this report**;
+- **Release results**: the cover's `--cover-result`, counts of requirements, shells, bindings and
+  records (passed and not), records per volume (from the evidence indexes), and the **CI run
+  register**: each workflow run once, with its run ID linked to its URL, head commit (red when it
+  is not `--commit`), record count and conclusion (the workflow record's status, else whether every
+  record from the run passed); records with no CI run are grouped by workflow;
+- **Intended use to Tier 1**, when Tier 1 requirements carry an `IUS Source: ...` line;
+- one chapter per Tier 1: the statement and its IUS Source line, `Verified by` and `Risks` lines,
+  the **derived requirements** table (Requirement | Title | Area | Shells | Evidence passed/bound |
+  Risks | Volume; a requirement with no shell is a red row), the Tier 1 journey shells (shells that
+  verify only Tier 1s), then each derived requirement with its Area, `Parent`, `Verified by` and
+  `Risks` lines and statement, followed by the shells that verify it (each printed once, under the
+  first requirement it verifies), with their evidence rows;
+- **Procedural Controls** (requirements in `procedural_files`) and **Requirements outside the Tier 1
+  hierarchy** (any that trace to no Tier 1, and shells that verify no requirement), when there are
+  any; the render fails unless every requirement and shell is printed exactly once;
+- **Risk trace** instead of the register: Risk | Controls | Requirements | Shells | Evidence |
+  Volume (`--risk-register-ref` names where the full register is);
+- **Appendix A: Requirements by area**: each requirement file with its introduction and its
+  requirements (Tier 1, page), then the test files' introductions;
+- **Appendix B: Evidence index**: every bound record, its status, volume and page (inline evidence
+  cites this report's page).
+
+The hierarchy always prints list matrices. In the `files` structure, `--matrix-style list` replaces
+each file's tick matrix with a portrait longtable (Requirement | Title | Parent | Verified by |
+Evidence passed/bound | Risks) that repeats its header across pages; a requirement with no shell
+is a red row, and shells that bind no record show `N/A (manual)` or `N/A (procedural)`.
+
+`--document-set-file` is JSON, either a list of entries or
+`{"documents": [...], "commit": "...", "version": "...", "report": "..."}`. Each entry:
+
+```json
+{"code": "BXD-VF-019-E01", "title": "Traceability Evidence Volume E01: Data Ingestion",
+ "tier1": ["REQ-VF-T1-001", "REQ-VF-T1-002"], "pages": 97, "records": 112,
+ "sha256": "<64 lower-case hex>", "file": "BXD-VF-019-E01.pdf", "commit": "<sha>", "size_bytes": 7239089}
+```
+
+`code`, `title`, `sha256`, `pages` and `records` are required; `tier1_scope` (text) may stand in for
+`tier1`; other keys are refused. The render fails if the entries are not exactly the manifest's
+volumes, if an entry's `records` differs from the evidence indexes, if a commit differs from
+`--commit`, or if the report lists itself. The cover then says that its approval covers every
+document in the table.
 
 ### Requirements
 ```

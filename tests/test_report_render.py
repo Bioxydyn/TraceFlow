@@ -480,3 +480,10 @@ def test_cli_reports_document_set_and_hierarchy_errors(tmp_path: Path, fake_late
     no_prefix = traceflow_main._run(str(corpus), "2.0", str(tmp_path / "o.pdf"), structure="hierarchy",
                                     test_results_dir=str(results), work_dir=str(tmp_path / "w"))
     assert no_prefix == 1 and "Tier 1 prefix" in capsys.readouterr().err
+
+
+def test_readme_documents_the_structure_flags() -> None:
+    readme = (Path(__file__).parent.parent / "README.md").read_text()
+    for flag in ["--structure hierarchy", "--matrix-style list", "--document-set-file", "--cover-engineer",
+                 "--commit", "--date-format", "--risk-register-ref", "SOURCE_DATE_EPOCH"]:
+        assert flag in readme, flag
