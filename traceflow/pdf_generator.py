@@ -1517,12 +1517,15 @@ class PdfReport():
         workflow = record.workflow_name or record.workflow_path
         if workflow:
             parts.append(latex_escape(workflow))
-        if record.run_id is not None or record.run_url:
-            run_text = f"run {record.run_id}" if record.run_id is not None else "run"
+        if record.run_id or record.run_url:
+            run_text = f"run {record.run_id}" if record.run_id else "run"
             if record.run_url:
                 parts.append(f"\\href{{{self._href_url(record.run_url)}}}{{{run_text}}}")
             else:
                 parts.append(run_text)
+        elif record.run_id is not None:
+            # Run ID 0: collected outside CI. Said as the report's CI run register says it.
+            parts.append("\\textit{not a CI run}")
         if record.duration_text:
             parts.append(latex_escape(record.duration_text))
         if record.source:
@@ -1629,7 +1632,10 @@ class PdfReport():
             lines += [
                 "\\centering",
                 f"\\adjustbox{{{self._RECORD_FIGURE_BOX}}}{{\\includegraphics{{{staged_path}}}}}",
-                "\\caption{" + caption + "}\\label{" + self._figure_label(record.evidence_id, position) + "}",
+                # Ragged right: a justified caption stretches its first line when the unbreakable
+                # SHA-256 does not fit after it. The list-of-figures text stays plain.
+                "\\caption[{" + caption + "}]{\\raggedright " + caption + "}\\label{"
+                + self._figure_label(record.evidence_id, position) + "}",
             ]
             if figure.checked_at:
                 lines.append("{\\footnotesize Checked at " + breakable_code(figure.checked_at) + "\\par}")

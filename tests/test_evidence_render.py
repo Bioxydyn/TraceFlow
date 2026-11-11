@@ -716,3 +716,25 @@ def test_default_render_headings_get_plain_bookmarks(tmp_path: Path, fake_latex:
         fake_latex.tex
     )
     assert re.search(r"\\subsection\{\\mbox\{\\hyperref", fake_latex.tex) is None
+
+
+def test_record_figure_caption_is_ragged_right(tmp_path: Path) -> None:
+    results = tmp_path / "results"
+    _write_result(results, "PY-UPLOAD", figure=True)
+    latex = _render_record(tmp_path, results, "PY-UPLOAD")
+    caption = re.search(r"\\caption\[\{(.*?)\}\]\{\\raggedright (.*?)\}\\label\{evfig:PY-UPLOAD:1\}", latex)
+    # A justified caption stretched its first line when the unbreakable SHA-256 did not fit.
+    assert caption is not None and caption.group(1) == caption.group(2)
+    assert "SHA-256" in caption.group(1)
+
+
+def test_record_provenance_says_when_a_record_is_not_from_ci(tmp_path: Path) -> None:
+    results = tmp_path / "results"
+    folder = _write_result(results, "PY-UPLOAD")
+    md = (folder / "result.md").read_text()
+    md = md.replace("- Run ID: `42`", "- Run ID: `0`").replace(
+        "- Run URL: https://github.com/example/repo/actions/runs/42", "- Run URL: <unavailable>"
+    )
+    (folder / "result.md").write_text(md)
+    latex = _render_record(tmp_path, results, "PY-UPLOAD")
+    assert "\\textit{not a CI run}" in latex and "run 0" not in latex

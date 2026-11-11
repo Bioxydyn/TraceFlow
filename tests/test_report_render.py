@@ -487,3 +487,33 @@ def test_readme_documents_the_structure_flags() -> None:
     for flag in ["--structure hierarchy", "--matrix-style list", "--document-set-file", "--cover-engineer",
                  "--commit", "--date-format", "--risk-register-ref", "SOURCE_DATE_EPOCH"]:
         assert flag in readme, flag
+
+
+# ------------------------------------------------------------------ end-to-end review fixes
+
+
+def test_report_longtables_keep_space_from_the_paragraph_above(tmp_path: Path, fake_latex: _FakeLatex) -> None:
+    _render_hierarchy(tmp_path)
+    tables = fake_latex.tex.count("\\begin{longtable}")
+    assert tables > 3
+    spacing = "\\setlength{\\LTpre}{\\smallskipamount}\\setlength{\\LTpost}{\\smallskipamount}%"
+    assert fake_latex.tex.count(spacing) == tables
+
+
+def test_risk_trace_lists_volumes_in_manifest_order(tmp_path: Path, fake_latex: _FakeLatex) -> None:
+    corpus, results = _hierarchy_corpus(tmp_path)
+    risks = (corpus / "risks" / "risk-register.md").read_text().replace(
+        "Test evidence: TEST-VOX-UPLOAD-001, TEST-VOX-AUDITLOG-001.",
+        "Test evidence: TEST-VOX-AUDITLOG-001, TEST-VOX-UPLOAD-001.",
+    )
+    (corpus / "risks" / "risk-register.md").write_text(risks)
+    document = process_directory(str(corpus), version="2.0")
+    report = PdfReport(document, test_results_dir=str(results))
+    report.render(
+        include_design=False, include_supplementary=False, structure="hierarchy",
+        volume_plan=plan_volumes(document, parse_manifest(_manifest())), evidence_mode="reference",
+        evidence_index=_index(tmp_path), document_code="BXD-VF-019", work_dir=str(tmp_path / "work"),
+    )
+    trace = fake_latex.tex.split("\\section{Risk trace}")[1].split("\\section{Appendix A")[0]
+    row = next(line for line in trace.splitlines() if "\\label{RISK-VOX-001}" in line)
+    assert row.endswith("& \\mbox{E01}, \\mbox{E02} \\\\")

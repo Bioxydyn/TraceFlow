@@ -53,6 +53,9 @@ def longtable(headers: list[str], fractions: list[float], rows: list[str], *, si
     lines = [
         f"{{\\{size}\\setlength{{\\tabcolsep}}{{3pt}}\\renewcommand{{\\arraystretch}}{{1.15}}%",
         "\\setlength{\\LTleft}{0pt}\\setlength{\\LTright}{0pt}%",
+        # The header sets no space around a longtable; without some, the top rule touches the
+        # descenders of the paragraph above it.
+        "\\setlength{\\LTpre}{\\smallskipamount}\\setlength{\\LTpost}{\\smallskipamount}%",
         f"\\begin{{longtable}}{{{spec}}}",
         "\\toprule", header, "\\midrule", "\\endfirsthead",
         f"\\multicolumn{{{len(headers)}}}{{@{{}}l}}{{\\textit{{(continued)}}}} \\\\",
@@ -608,11 +611,15 @@ class StructureRenderer:
                     code = self.plan.shells[shell_id].volume_code if shell_id in self.plan.shells else None
                     if code and code not in volumes:
                         volumes.append(code)
+                # In manifest order ("E03, E04"), not the order the register happens to cite shells.
+                position = {spec.code: spec.index for spec in self.plan.manifest.volumes}
+                volumes.sort(key=lambda code: (position.get(code, len(position) + 1), code))
             else:
                 for evidence_id in self.evidence_of_shells(shells):
                     code = str(self.report.evidence_index.get(evidence_id, {}).get("volume", "") or "")
                     if code and code not in volumes:
                         volumes.append(code)
+                volumes.sort()
             controls = risk.attributes.get("controls", "")
             # \leavevmode: a label at the very start of a p-cell would push the text down a line.
             first = (
