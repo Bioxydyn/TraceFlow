@@ -7,6 +7,7 @@ from cyclopts import App, Parameter
 from traceflow.evidence_render import EvidenceIndexError, default_index_path, load_evidence_index
 from traceflow.parser import process_directory, Document
 from traceflow.pdf_generator import PdfReport
+from traceflow.report_structure import check_commit
 from traceflow.version import __version__
 from traceflow.volumes import (
     ManifestError,
@@ -229,7 +230,33 @@ def _run(
         Optional[str],
         Parameter(
             name="--cover-version",
-            help="'Version under test' on an evidence volume's cover (default: '<name> <VERSION>').",
+            help="'Version under test' on the cover, for example 'VoxelFlow 3.0.5 (commit abc123def456)'. "
+            "Not given: the row stays blank (an evidence volume prints '<name> <VERSION>'); given as '': "
+            "the row is left out.",
+        ),
+    ] = None,
+    cover_engineer: Annotated[
+        Optional[str],
+        Parameter(
+            name="--cover-engineer",
+            help="'Engineer' on the cover. Not given: the row stays blank; given as '': the row is left out.",
+        ),
+    ] = None,
+    commit: Annotated[
+        Optional[str],
+        Parameter(
+            name="--commit",
+            help="The product commit under test (7-40 hex). The footer then reads "
+            "'<code> | <name> <VERSION> (<commit12>) | TraceFlow <version>'.",
+        ),
+    ] = None,
+    date_format: Annotated[
+        Optional[str],
+        Parameter(
+            name="--date-format",
+            help="strftime format of the generation date on the cover (for example '%d %B %Y'). "
+            "Evidence volumes default to '%d %B %Y'; otherwise LaTeX's \\today. "
+            "SOURCE_DATE_EPOCH, when set, fixes the date and the PDF's ID and timestamps.",
         ),
     ] = None,
     toc_depth: Annotated[
@@ -282,6 +309,11 @@ def _run(
         volume=volume,
         toc_depth=toc_depth,
     )
+    if not usage_error:
+        try:
+            check_commit(commit)
+        except ValueError as exc:
+            usage_error = str(exc)
     if usage_error:
         sys.stderr.write(f"ERROR: {usage_error}\n")
         return 2
@@ -316,6 +348,8 @@ def _run(
                 evidence_index_out=evidence_index_out or default_index_path(output),
                 work_dir=work_dir,
                 strict_references=strict_references,
+                commit=commit,
+                date_format=date_format,
             )
         except (ManifestError, VolumePartitionError) as exc:
             for error in exc.errors:
@@ -370,6 +404,10 @@ def _run(
         toc_depth=toc_depth,
         work_dir=work_dir,
         strict_references=strict_references,
+        cover_version=cover_version,
+        cover_engineer=cover_engineer,
+        commit=commit,
+        date_format=date_format,
     )
     with open(output, "wb") as f:
         f.write(output_file)

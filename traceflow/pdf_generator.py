@@ -47,6 +47,7 @@ from traceflow.parser import (
     RiskDocument,
     parse_markdown,
 )
+from traceflow.report_structure import DEFAULT_DATE_FORMAT, check_commit, generated_date, source_date_epoch
 from traceflow.version import __version__
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -1853,11 +1854,20 @@ class PdfReport():
         toc_depth: Optional[int] = None,
         cover_subtitle: str = "",
         cover_rows: Optional[list[tuple[str, str]]] = None,
+        cover_version: Optional[str] = None,
+        cover_engineer: Optional[str] = None,
+        generated_date_text: Optional[str] = None,
+        footer_left: Optional[str] = None,
     ) -> tuple[str, str, str]:
         """The rendered ``report-header.tex``, and the left and right logo file names.
 
         ``cover_rows`` (label, LaTeX value) replaces the standard cover table and its
         sign-off blocks (an evidence volume is approved as part of its report).
+
+        ``cover_version`` / ``cover_engineer``: ``None`` prints the row blank (today's cover,
+        filled in by hand), ``""`` leaves the row out, any other text fills it.
+        ``generated_date_text`` replaces LaTeX's ``\\today``; ``footer_left`` (LaTeX) replaces
+        the footer's "<code> | Report produced using TraceFlow <version>".
         """
         header = _latex_jinja2_env.from_string(
             load_resource("traceflow.res", "report-header.tex").decode("utf-8")
@@ -1879,6 +1889,14 @@ class PdfReport():
         tex_vars["cover_subtitle"] = cover_subtitle
         tex_vars["cover_rows"] = list(cover_rows or [])
         tex_vars["record_layout"] = self.evidence_layout == "record"
+        tex_vars["cover_version"] = self._cover_row_value(cover_version)
+        tex_vars["cover_engineer"] = self._cover_row_value(cover_engineer)
+        tex_vars["generated_date"] = latex_escape(generated_date_text) if generated_date_text else "\\today"
+        tex_vars["footer_left"] = (
+            footer_left
+            if footer_left is not None
+            else "\\traceflowdocumentcode{} | Report produced using TraceFlow " + __version__
+        )
         top_left_logo_name = PdfReport._logo_basename(self.top_left_logo_path, "traceflow-logo.png")
         # An empty right-logo name suppresses the header's right slot entirely
         # (the template guards on it); otherwise it falls back to the bundled logo.
@@ -1890,6 +1908,36 @@ class PdfReport():
         tex_vars["top_left_logo"] = top_left_logo_name
         tex_vars["top_right_logo"] = top_right_logo_name
         return header.render(**tex_vars), top_left_logo_name, top_right_logo_name
+
+    def _cover_row_value(self, value: Optional[str]) -> Optional[str]:
+        """Template value of an optional cover row: ``""`` (blank row), ``None`` (no row), or text."""
+        if value is None:
+            return ""
+        if not value.strip():
+            return None
+        return self.process_text(value.strip())
+
+    def _release_footer(self, commit: str) -> str:
+        """``<code> | <product> <version> (<commit12>) | TraceFlow <version>`` (TF-07)."""
+        product = " ".join(part for part in (self.document.name, self.document.version) if part)
+        if commit:
+            product += f" ({commit[:12]})"
+        return f"\\traceflowdocumentcode{{}} | {latex_escape(product)} | TraceFlow {latex_escape(__version__)}"
+
+    @staticmethod
+    def _reproducible(document: str) -> tuple[str, Optional[dict[str, str]]]:
+        """With ``SOURCE_DATE_EPOCH`` set: a fixed PDF ID and date, so equal inputs give equal bytes.
+
+        pdfTeX then stamps the creation date from ``SOURCE_DATE_EPOCH``; ``FORCE_SOURCE_DATE``
+        makes ``\\today`` follow it too. The trailer ID is a hash of the LaTeX source (pdfTeX
+        would otherwise derive it from the file name), and no ``PTEX.*`` file names are written.
+        """
+        epoch = source_date_epoch()
+        if epoch is None:
+            return document, None
+        trailer_id = hashlib.sha256(f"{epoch}\n{document}".encode("utf-8")).hexdigest()[:32]
+        prefix = f"\\pdftrailerid{{{trailer_id}}}\\pdfsuppressptexinfo=-1\n"
+        return prefix + document, dict(os.environ, FORCE_SOURCE_DATE="1")
 
     def _compile_document(
         self,
@@ -1922,6 +1970,7 @@ class PdfReport():
                 shutil.copy(os.path.join(root, filename), filename)
 
         output_filename = tex_name or self.get_temporary_filename(suffix=".tex")
+        document, latex_env = self._reproducible(document)
 
         with open(output_filename, "w") as output_file:
             output_file.write(document)
@@ -1935,6 +1984,7 @@ class PdfReport():
                     stderr=subprocess.STDOUT,
                     universal_newlines=True,
                     errors="replace",
+                    env=latex_env,
                 )  # nopep8
         except subprocess.CalledProcessError as exc:
             print("Status : FAIL", exc.returncode, exc.output)
@@ -2018,8 +2068,23 @@ class PdfReport():
         toc_depth: Optional[int] = None,
         work_dir: Optional[str] = None,
         strict_references: bool = False,
+        cover_version: Optional[str] = None,
+        cover_engineer: Optional[str] = None,
+        commit: Optional[str] = None,
+        date_format: Optional[str] = None,
     ) -> bytes:
         """Render the report. The defaults reproduce today's structure.
+
+        Cover and footer (all opt-in):
+
+        - ``cover_version`` / ``cover_engineer``: ``None`` keeps the blank row, ``""`` drops it.
+        - ``commit``: the product commit; the footer becomes "<code> | <name> <version>
+          (<commit12>) | TraceFlow <version>".
+        - ``date_format``: print the generation date with this strftime format; otherwise
+          LaTeX's ``\\today``. ``SOURCE_DATE_EPOCH`` fixes the date and the PDF's ID and
+          timestamps.
+
+        Evidence:
 
         - ``evidence_layout``: "legacy" (today's evidence blocks) or "record" (contract
           section 3 records).
@@ -2043,6 +2108,9 @@ class PdfReport():
             raise ValueError("evidence_mode `reference` needs an evidence index")
         if toc_depth is not None and not 0 <= toc_depth <= 5:
             raise ValueError("toc_depth must be between 0 and 5")
+        commit = check_commit(commit)
+        date_text = generated_date(date_format) if date_format else None
+        footer = self._release_footer(commit) if commit else None
         # Resolved now: the build runs inside the work directory.
         index_out_path = os.path.abspath(evidence_index_out) if evidence_index_out is not None else None
         original_unique_ids = self.unique_ids
@@ -2079,6 +2147,10 @@ class PdfReport():
                 document_code=document_code,
                 document_type=document_type,
                 toc_depth=toc_depth,
+                cover_version=cover_version,
+                cover_engineer=cover_engineer,
+                generated_date_text=date_text,
+                footer_left=footer,
             )
 
             build_dir = work_dir or "report"
@@ -2330,6 +2402,8 @@ class PdfReport():
         evidence_index_out: Optional[str] = None,
         work_dir: Optional[str] = None,
         strict_references: bool = False,
+        commit: Optional[str] = None,
+        date_format: Optional[str] = None,
     ) -> tuple[bytes, dict[str, dict]]:
         """Render one evidence volume of ``plan`` and return the PDF and its evidence index.
 
@@ -2339,9 +2413,13 @@ class PdfReport():
         IDs print as bold text, since the volume does not contain their sections.
 
         ``evidence_index`` (optional, other volumes' indexes) adds page numbers to pointers into
-        other volumes. ``evidence_index_out`` writes this volume's index JSON.
+        other volumes. ``evidence_index_out`` writes this volume's index JSON. The footer reads
+        "<code> | <name> <version> (<commit12>) | TraceFlow <version>" and the cover's date
+        uses ``date_format`` (default "%d %B %Y"), honouring ``SOURCE_DATE_EPOCH``.
         """
         spec = plan.manifest.volume(volume)
+        commit = check_commit(commit)
+        date_text = generated_date(date_format or DEFAULT_DATE_FORMAT)
         index_out_path = os.path.abspath(evidence_index_out) if evidence_index_out is not None else None
         report_code = plan.manifest.report_code
         version = self.document.version
@@ -2383,7 +2461,7 @@ class PdfReport():
                     f"{passed} of {len(records)} records in this volume passed. "
                     f"The release verdict is in \\mbox{{{latex_escape(report_code)}}}.",
                 ),
-                ("Initial Report Generation Date", "\\today"),
+                ("Initial Report Generation Date", latex_escape(date_text)),
                 (
                     "Approval",
                     f"Approved as part of \\mbox{{{latex_escape(report)}}}; no separate signature. This file's "
@@ -2400,6 +2478,8 @@ class PdfReport():
                 toc_depth=toc_depth,
                 cover_subtitle=latex_escape(f"Evidence volume {spec.index} of {count}, part of {report}"),
                 cover_rows=cover_rows,
+                generated_date_text=date_text,
+                footer_left=self._release_footer(commit),
             )
 
             build_dir = work_dir or "report"

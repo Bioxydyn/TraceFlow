@@ -157,7 +157,7 @@
 \fancyhead[R]{\traceflowrightheaderstd}
 \fancyhfoffset[L]{0pt}
 \fancyhfoffset[R]{0pt}
-\fancyfoot[L]{\footnotesize \traceflowdocumentcode{} | Report produced using TraceFlow \VAR{version}}
+\fancyfoot[L]{\footnotesize \VAR{footer_left}}
 \fancyfoot[R]{\footnotesize Page \thepage\ of \pageref{LastPage}}
 \renewcommand{\headrulewidth}{0.3pt}
 \renewcommand{\footrulewidth}{0pt}
@@ -170,7 +170,7 @@
 \BLOCK{ if cover_subtitle }
     {\large \VAR{cover_subtitle}} \\[0.25em]
 \BLOCK{ endif }
-    {\small \textbf{Generated:} \today}
+    {\small \textbf{Generated:} \VAR{generated_date}}
 \end{center}
 \vspace{0.3cm}
 
@@ -204,17 +204,21 @@
 \arrayrulecolor{gray} % Set the color of the horizontal and vertical lines to gray
 \begin{tabular}{|>{\columncolor{gray!30}}m{0.45\linewidth}|m{0.45\linewidth}|}
 \hline
-\textbf{Version under test} & \\
+\BLOCK{ if cover_version is not none }
+\textbf{Version under test} & \VAR{cover_version} \\
 \hline
-\textbf{Engineer} & \\
+\BLOCK{ endif }
+\BLOCK{ if cover_engineer is not none }
+\textbf{Engineer} & \VAR{cover_engineer} \\
 \hline
+\BLOCK{ endif }
 \BLOCK{ if not cover_no_tester }
 \textbf{Tester} & \\
 \hline
 \BLOCK{ endif }
 \textbf{Test Date} & \VAR{cover_test_date} \\
 \hline
-\textbf{Initial Report Generation Date} & \today \\
+\textbf{Initial Report Generation Date} & \VAR{generated_date} \\
 \hline
 \textbf{Result} & \VAR{cover_result} \\
 \hline
@@ -242,17 +246,21 @@
 \arrayrulecolor{gray} % Set the color of the horizontal and vertical lines to gray
 \begin{tabular}{|>{\columncolor{gray!30}}m{0.45\linewidth}|m{0.45\linewidth}|}
 \hline
-\textbf{Version under test} & \\
+\BLOCK{ if cover_version is not none }
+\textbf{Version under test} & \VAR{cover_version} \\
 \hline
-\textbf{Engineer} & \\
+\BLOCK{ endif }
+\BLOCK{ if cover_engineer is not none }
+\textbf{Engineer} & \VAR{cover_engineer} \\
 \hline
+\BLOCK{ endif }
 \BLOCK{ if not cover_no_tester }
 \textbf{Tester} & \\
 \hline
 \BLOCK{ endif }
 \textbf{Test Date} & \VAR{cover_test_date} \\
 \hline
-\textbf{Initial Report Generation Date} & \today \\
+\textbf{Initial Report Generation Date} & \VAR{generated_date} \\
 \hline
 \textbf{Result} & \VAR{cover_result} \\
 \hline
