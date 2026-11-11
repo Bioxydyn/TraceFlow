@@ -1530,7 +1530,8 @@ class PdfReport():
         for position, figure in enumerate(record.figures):
             if self._is_external_reference(figure.path):
                 continue
-            staged_path = f"{staged_dir}/{figure.path.lstrip('./')}"
+            relative = figure.path[2:] if figure.path.startswith("./") else figure.path
+            staged_path = f"{staged_dir}/{relative}"
             if not os.path.isfile(staged_path):
                 raise FileNotFoundError(
                     f"Evidence `{record.evidence_id}` figure `{figure.path}` is missing from its result folder"
