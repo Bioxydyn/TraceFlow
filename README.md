@@ -118,6 +118,72 @@ lines). It uses `result.json` when present and maps `result.md` onto the same fi
 otherwise. A `result.json` figure hash that does not match the file, a missing figure, or a
 status that disagrees with `result.md` fails the load.
 
+#### How evidence prints
+
+Every option below is off by default; without them an `autotest` block prints as it always
+has (the "legacy" block: Description, Assertions, the metadata bullets, then the result's
+sections). Escaping and layout fixes apply in every mode: `~`, `\` and inline HTML such as
+`<docId>` print literally, code spans are escaped and may break after `/ . _ : -`, linked IDs
+are never hyphenated, figures are capped at 0.6 of the text height (so a tall capture keeps
+its caption on the page), the assertion's source code and the collector's duplicate
+`**Caption:**` line are no longer printed, a multi-line Description prints whole, and code
+listings use small proportional type that wraps anywhere, marking each continuation.
+
+- `--evidence-layout record` prints each record as: an `Evidence <id>` header with the status
+  on the right (a label and named destination `ev:<id>`, and a level-3 PDF bookmark); one
+  provenance line (kind | workflow | run, linked when it has a URL | duration | source); the
+  description; the assertions, each with its rows as a check/expected/actual table and a link
+  to its figure; the output, only when there is some; the figures, each caption ending in the
+  first 12 hex characters of the image's SHA-256. Its sub-headings are unnumbered and never in
+  the contents. A folder with only `result.json` always prints this way.
+- `--evidence-bound-by` ends each record-layout record with the shells, requirements and
+  Tier 1s that bind it.
+- `--dedupe-evidence` prints each record in full once, at its home binding (the first shell
+  whose requirements, or their parents, include one its assertions name; else the first
+  binding), and a one-line pointer elsewhere: `Evidence <id> (Passed): full record under
+  TEST-X, p. N`, followed by the captions that concern that shell.
+- `--evidence-mode reference --evidence-index E01.evidence-index.json [--evidence-index ...]`
+  prints one row per binding instead of the record: ID | status | kind | assertion captions |
+  `<volume> p.<page>`. It loads the records (for kind and captions) but stages no files. An ID
+  missing from every index, or whose status differs from the test results, fails the render.
+- `--evidence-index-out PATH` writes `{id: {volume, page, status, kind, anchor, shell,
+  figures}}` for every record printed in full, with pages read from the final pass's `.aux`
+  (`volume` is the `--document-code`).
+- `--toc-depth N` sets the contents depth (0-5) and unnumbers headings, so no number is glued to
+  an ID; PDF bookmarks keep depth 3.
+- `--work-dir DIR` builds in `DIR` (default `./report`) with a stable `traceflow.tex`; give each
+  concurrent render its own.
+- `--strict-references` fails the render if the final pass reports any undefined reference. An
+  undefined reference to an evidence record (`ev:`) always fails.
+
+#### Rendering an evidence volume
+
+    traceflow path/to/project-docs 3.0.5 out/BXD-VF-019-E01.pdf \
+        --render-mode evidence-volume --volume-manifest volumes.yml --volume BXD-VF-019-E01 \
+        --test-results-dir results --work-dir build/E01 [--cover-version "VoxelFlow 3.0.5 (commit abc123def456)"]
+
+The whole directory is parsed and checked, then the volume prints:
+
+- a cover with no signature block: "Evidence volume n of N, part of <report code> <version>",
+  the version under test, the Tier 1 scope, "m of n records in this volume passed" and
+  "Approved as part of <report code> <version>";
+- contents (depth 2 unless `--toc-depth` says otherwise; `--skip-toc` drops them);
+- a one-page "How to read this volume";
+- a record index: ID, status, binding shells, page;
+- the body, by Tier 1 and then by shell heading (ID, title and the requirements it verifies;
+  the shell text stays in the report). Each record homed in the volume prints once in the
+  record layout with its "Bound by" list; every other binding prints a pointer, to a page in
+  this volume or to the volume that holds the record. Pass the other volumes' indexes with
+  `--evidence-index` to give those pointers a page too. REQ and TEST IDs print as bold text,
+  since the volume does not contain their sections.
+
+The volume's index is written to `--evidence-index-out`, or `<OUTPUT stem>.evidence-index.json`.
+The render fails unless every home record printed exactly once and every `ev:` label was placed.
+`--document-code` (default: the volume code), `--document-type` (default "Traceability
+Evidence Volume") and `--report-title` (default "<name> <version>: Traceability Evidence Volume
+E01: <title>") override the cover. Render the volumes first, then the report with
+`--evidence-mode reference` and their indexes: references run one way, report to volume.
+
 ### Project configuration (`config.yml`)
 
 An optional `config.yml` in the input directory can set:
@@ -181,6 +247,8 @@ has no home, or an override is invalid. `tests/fixtures/voxelflow-volumes-10-tie
 example. From Python, `traceflow.volumes.plan_volumes(document, load_manifest(path))` returns
 the same plan, with `layout(volume)` giving each volume's Tier 1 groups, shells, home records
 and pointer records.
+
+To render a volume, see [Rendering an evidence volume](#rendering-an-evidence-volume).
 
 ### Requirements
 ```
