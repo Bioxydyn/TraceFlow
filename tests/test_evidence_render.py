@@ -262,6 +262,8 @@ def test_figures_are_height_capped_without_assertion_source(tmp_path: Path) -> N
     assert "toBeVisible" not in latex
     assert "(evidence for REQ-A, REQ-B)" in latex
     assert r"Checked at \texttt{/\allowbreak{}experiments/\allowbreak{}7?\allowbreak{}tab=\allowbreak{}grid}" in latex
+    # Ragged right, so an unbreakable linked ID cannot stretch the line before it.
+    assert "\\caption[{Grid shows the scan \\textit{(evidence for REQ-A, REQ-B)}}]{\\raggedright Grid shows" in latex
 
 
 def test_legacy_block_drops_caption_lines_and_keeps_the_whole_description(tmp_path: Path) -> None:

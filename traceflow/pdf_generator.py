@@ -802,11 +802,15 @@ class PdfReport():
             # The height cap keeps a tall capture (a full-page labbook screenshot) and its
             # caption on one page; [H] keeps the figure inside its evidence block. The
             # assertion's source code is not printed: it was truncated or transpiled.
+            # The caption is ragged right: a linked ID sits in an \mbox (it never splits), and
+            # in a justified caption that stretched the line before it. The list-of-figures text
+            # stays plain.
+            caption = " ".join(caption_parts)
             latex = [
                 '\n\\begin{figure}[H]',
                 '\n\\centering',
                 f'\n\\includegraphics[{self._FIGURE_SIZE}]{{{url}}}',
-                "\n\\caption{" + " ".join(caption_parts) + "}",
+                "\n\\caption[{" + caption + "}]{\\raggedright " + caption + "}",
             ]
             checked_at = str(sidecar.get("checkedAt") or "").strip()
             if checked_at:
