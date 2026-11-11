@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import subprocess  # noqa S404
@@ -534,10 +535,22 @@ class PdfReport():
             "\\end{tabular}",
             "\\end{center}",
             "",
-            "\\subsection{Risk Register}",
-            "",
         ])
         return "\n".join(lines) + "\n"
+
+    def _risk_test_evidence_cell(self, text: str) -> str:
+        """The Test Evidence cell: one ID per line when it is a list of IDs, else the prose."""
+        parts = [part.strip().rstrip(".").strip() for part in re.split(r"[,;]", text)]
+        parts = [part for part in parts if part]
+        if parts and all(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]*", part) for part in parts):
+            # One ID per line. An ID too long for the cell breaks after a hyphen, never inside
+            # a word (an \mbox would run past the cell at \small).
+            cells = [
+                f"\\hyperref[{part}]{{\\textbf{{{breakable(part)}}}}}" if part in self.unique_ids else breakable(part)
+                for part in parts
+            ]
+            return " \\newline ".join(cells)
+        return self.process_text(text)
 
     def build_risk_register(self, risk_page: RiskDocument) -> str:
         if not risk_page.items:
@@ -562,9 +575,13 @@ class PdfReport():
         test_evidence_width = 4.7
 
         table_lines = self._begin_a3_landscape_block(clearpage=True)
+        # The heading sits on the A3 page with its table, never alone at the foot of the
+        # previous page. \small, not \footnotesize: the A3 page is often printed on A4.
         table_lines.extend(
             [
-                "\\footnotesize",
+                "\\subsection{Risk Register}",
+                "",
+                "\\small",
                 "\\setlength\\tabcolsep{3pt}",
                 "\\renewcommand{\\arraystretch}{1.3}",
                 "\\setlength\\LTleft{0pt}",
@@ -626,9 +643,11 @@ class PdfReport():
                 residual_lines.append(self.process_text(residual_risk_text))
             residual_content = " \\\\ ".join([line for line in residual_lines if line] or ["-"])
             residual_cell = f"\\parbox[t]{{{residual_width}cm}}{{{residual_content}}}"
-            test_evidence_text = self.process_text(risk.attributes.get("test_evidence", ""))
+            test_evidence_text = self._risk_test_evidence_cell(risk.attributes.get("test_evidence", ""))
             test_evidence_content = test_evidence_text if test_evidence_text else "-"
-            test_evidence_cell = f"\\parbox[t]{{{test_evidence_width}cm}}{{{test_evidence_content}}}"
+            test_evidence_cell = (
+                f"\\parbox[t]{{{test_evidence_width}cm}}{{\\raggedright {test_evidence_content}}}"
+            )
             title_text = self.process_text(risk.title)
             id_text = self.process_text_impl(risk.risk_id, set())
             first_cell = (
@@ -816,18 +835,21 @@ class PdfReport():
 """
 
         def handle_manual_test(_: dict) -> str:
-            pass_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))  # noqa S311
-            fail_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))  # noqa S311
-            skip_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))  # noqa S311
-            comment_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))  # noqa S311
+            pass_id = self._form_field_name()
+            fail_id = self._form_field_name()
+            skip_id = self._form_field_name()
+            comment_id = self._form_field_name()
+            # The minipage keeps the Pass/Fail/Skip row and its comments box on one page.
             return r"""
 \noindent
+\begin{minipage}{\linewidth}
 \begin{Form}
 \textbf{Pass} \CheckBox[name=""" + pass_id + r"""]{} \hspace{2cm} \textbf{Fail} \CheckBox[name=""" + fail_id + r"""]{} \hspace{2cm} \textbf{Skip} \CheckBox[name=""" + skip_id + r"""]{} \\
 \vspace{0.05cm}
 \textbf{Comments} \\
 \TextField[name=""" + comment_id + r""", multiline=true, width=\linewidth, height=""" + self.manualtest_comment_height + r"""]{}
 \end{Form}
+\end{minipage}
         """  # noqa E501
 
         def handle_auto_test(item: dict) -> str:
@@ -854,10 +876,11 @@ class PdfReport():
             return f"\\begin{{lstlisting}}\n{code_content}\n\\end{{lstlisting}}"
 
         def handle_mermaid(item: dict) -> str:
-            svg_path = PdfReport.get_temporary_filename(suffix=".svg", force_random=True)
-            mmd_path = PdfReport.get_temporary_filename(suffix=".mmd", force_random=True)
-
             mermaid_code = item["text"]
+            # Named after the diagram's source, so two builds of the same input name it alike.
+            stem = "mermaid-" + hashlib.sha256(mermaid_code.encode("utf-8")).hexdigest()[:16]
+            svg_path = stem + ".svg"
+            mmd_path = stem + ".mmd"
             caption_text = ""
             mermaid_lines = mermaid_code.splitlines()
             if mermaid_lines:
@@ -1152,6 +1175,7 @@ class PdfReport():
         self._tests_by_id = self.document.tests_by_id()
         self._requirements_by_id = self.document.requirements_by_id()
         self._bindings: Optional[dict[str, EvidenceBinding]] = None
+        self._form_fields = 0
 
     def _resolve_result_dir(self, evidence_id: str) -> str:
         if not self.test_results_dir:
@@ -1715,6 +1739,12 @@ class PdfReport():
         lines += ["\\end{tabularx}\\par}"]
         self._reference_rows_in_shell += 1
         return "\n".join(lines) + "\n"
+
+    def _form_field_name(self) -> str:
+        """A form-field name unique in the PDF and the same in every build of the same input."""
+        self._form_fields += 1
+        seed = f"{self.document.name}|{self.document.version}|{self._form_fields}"
+        return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:10].upper()
 
     @staticmethod
     def get_global_tex_vars() -> dict[str, str]:
