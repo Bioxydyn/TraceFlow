@@ -761,3 +761,15 @@ def test_record_provenance_says_when_a_record_is_not_from_ci(tmp_path: Path) -> 
     (folder / "result.md").write_text(md)
     latex = _render_record(tmp_path, results, "PY-UPLOAD")
     assert "\\textit{not a CI run}" in latex and "run 0" not in latex
+
+
+def test_bare_urls_in_prose_can_break_after_separators() -> None:
+    text = "tags (http://confluence:8090/display/QM/SHD-504+List_of) and REQ-1."
+    latex = PdfReport.process_text_impl(text, {"REQ-1"})
+    assert (
+        r"(http://\allowbreak{}confluence:8090/\allowbreak{}display/\allowbreak{}QM/\allowbreak{}SHD-\allowbreak{}"
+        r"504+\allowbreak{}List\_\allowbreak{}of)"
+    ) in latex
+    assert latex.endswith(r"\mbox{\hyperref[REQ-1]{\textbf{REQ-1}}}.")
+    # Ordinary words are left alone.
+    assert PdfReport.process_text_impl("a well-known sub-project", set()) == "a well-known sub-project"

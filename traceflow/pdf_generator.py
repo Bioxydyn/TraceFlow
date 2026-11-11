@@ -74,6 +74,9 @@ EVIDENCE_MODES = ("inline", "reference")
 
 _LATEX_TEXT_ESCAPES = LATEX_TEXT_ESCAPES
 _CODE_SPAN_PLACEHOLDER = re.compile("\x00(\\d+)\x00")
+# Break points in a bare URL: a placeholder while the text is escaped, then \allowbreak{}.
+_URL_BREAK = "\x03"
+_URL_BREAK_AFTER = re.compile(r"/(?!/)|[.?&=+_#-]")
 
 
 def _escape_latex_verbatim(text: str) -> str:
@@ -238,6 +241,10 @@ class PdfReport():
             altered_word = core.replace(":", "")
             if altered_word in unique_ids and core:
                 words[index] = f"{prefix}\\mbox{{\\hyperref[{altered_word}]{{\\textbf{{{core}}}}}}}{suffix}"
+            elif "://" in core or core.startswith("www."):
+                # A bare URL is one long word: let it break after its separators, or it runs past
+                # the margin (the SHD-504 Confluence links in the de-identification requirements).
+                words[index] = _URL_BREAK_AFTER.sub(lambda match: match.group(0) + _URL_BREAK, word)
 
         # 3. Rebuild the text
         new_text = " ".join(words)
@@ -267,7 +274,7 @@ class PdfReport():
             .replace(r"~", r"\textasciitilde{}")
         )
 
-        new_text = new_text.replace("\x01", r"\textbackslash{}")
+        new_text = new_text.replace("\x01", r"\textbackslash{}").replace(_URL_BREAK, r"\allowbreak{}")
 
         # 5. Put the code spans back.
         return _CODE_SPAN_PLACEHOLDER.sub(
