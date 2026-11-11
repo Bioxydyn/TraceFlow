@@ -1,11 +1,36 @@
+import fnmatch
 import os
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Union, List, Generic, TypeVar, Callable, Type
+from pathlib import Path, PurePosixPath
+from typing import Union, List, Generic, Optional, TypeVar, Callable, Type, TYPE_CHECKING
 
 import mistune
 import yaml
+
+if TYPE_CHECKING:  # pragma: no cover - typing only, avoids an import cycle
+    from traceflow.evidence import EvidenceRecord
+
+
+# Only H2 headings whose first word matches this pattern become requirement / test / risk
+# items. Any other H2 (``## Allowlisted gaps``) stays prose. ``config.yml`` can override it
+# with ``item_id_pattern:``.
+DEFAULT_ITEM_ID_PATTERN = r"^(REQ|TEST|RISK)-[A-Z0-9-]+"
+
+# A ``Parent:`` (or ``**Parent:**`` / ``Parents:``) line inside a requirement.
+_PARENT_LINE_PATTERN = re.compile(
+    r"^\s*(?:\*\*|__)?\s*Parents?\s*(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*(.*)$",
+    re.IGNORECASE,
+)
+_ID_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def _compile_item_id_pattern(pattern: Optional[str]) -> "re.Pattern[str]":
+    raw = pattern or DEFAULT_ITEM_ID_PATTERN
+    try:
+        return re.compile(raw)
+    except re.error as exc:
+        raise ValueError(f"config.yml item_id_pattern `{raw}` is not a valid regular expression: {exc}") from exc
 
 
 @dataclass
@@ -14,6 +39,20 @@ class Requirement:
     content: list[dict]
     title: str
     test_ids: list[str]
+    # Parsed from ``Parent:`` lines (de-duplicated, in order). The lines stay in ``content``
+    # so the default rendering is unchanged; ``body_content()`` drops them.
+    parent_ids: list[str] = field(default_factory=list)
+    # Filled by ``Document``: requirements whose ``Parent:`` names this one, in corpus order.
+    child_ids: list[str] = field(default_factory=list)
+    # Filled by ``Document``: risks that cite this requirement directly or cite a test shell
+    # that verifies it, in risk-register order.
+    risk_ids: list[str] = field(default_factory=list)
+    # ``Parent:`` lines that named no recognisable ID (reported by ``verify_hierarchy``).
+    malformed_parent_lines: list[str] = field(default_factory=list)
+
+    def body_content(self) -> list[dict]:
+        """``content`` without the paragraphs that only hold ``Parent:`` lines."""
+        return [elem for elem in self.content if not _is_parent_only_paragraph(elem)]
 
 
 @dataclass
@@ -24,6 +63,10 @@ class AutotestResult:
     ``## Assertions``, ``## Screenshots``, and ``## Output`` sections. This dataclass holds the
     extracted parts so the PDF generator can render them as labelled blocks rather than a
     flat bullet list.
+
+    ``record`` holds the typed evidence record (status, kind, run, figures with SHA-256, ...)
+    when the result was loaded through ``traceflow.evidence.load_autotest_result``. It comes
+    from ``result.json`` when present and from ``result.md`` otherwise.
     """
 
     test_id: str
@@ -32,6 +75,7 @@ class AutotestResult:
     metadata_items: list[dict] = field(default_factory=list)
     other_items: list[dict] = field(default_factory=list)
     missing_fields: list[str] = field(default_factory=list)
+    record: Optional["EvidenceRecord"] = None
 
 
 @dataclass
@@ -40,6 +84,10 @@ class Test:
     content: list[dict]
     title: str
     req_ids: list[str]
+    # IDs from the shell's ``autotest`` blocks, de-duplicated, in order.
+    evidence_ids: list[str] = field(default_factory=list)
+    # Filled by ``Document``: risks whose register entry cites this shell.
+    risk_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -79,45 +127,155 @@ class SubDocument(Generic[T]):
     items: List[T]
 
     @staticmethod
-    def from_file_impl(cls: Type[C], file_path: str, item_generator: Callable[[list[dict]], list[T]]) -> C:
+    def from_file_impl(
+        cls: Type[C],
+        file_path: str,
+        item_generator: Callable[[list[dict]], list[T]],
+        item_id_pattern: Optional[str] = None,
+    ) -> C:
         content = read_file(file_path)
         parsed_content = parse_markdown(content)
-        generic_content = []
-        for elem in parsed_content:
-            if is_ast_element_heading(elem) == 2:
-                break
-            if not is_ast_element_heading(elem) == 1:
-                generic_content.append(elem)
+        # Everything outside an item, except H1 headings, is the file's prose: the text before
+        # the first item plus any non-item H2 section (``## Allowlisted gaps``), in order.
+        generic_content, _ = split_items(parsed_content, item_id_pattern)
         title = extract_title(parsed_content)
         items = item_generator(parsed_content)
 
         return cls(title=title, generic_content=generic_content, filename=file_path, items=items)
 
 
+def _item_id_from_heading(heading_text: str, pattern: "re.Pattern[str]") -> Optional[str]:
+    """Return the item ID an H2 heading declares, or ``None`` if the heading is prose.
+
+    A heading that nearly declares an ID (wrong case, ``_`` for ``-``, a trailing ``/002``)
+    raises instead of silently turning a requirement or test into prose.
+    """
+    tokens = heading_text.split()
+    if not tokens:
+        return None
+    token = tokens[0].replace(":", "")
+    if pattern.fullmatch(token):
+        return token
+    has_digit = any(char.isdigit() for char in token)
+    normalised = token.upper().replace("_", "-")
+    if has_digit and (pattern.match(token) or pattern.fullmatch(normalised)):
+        raise ValueError(
+            f"Heading `## {heading_text}` looks like an item ID, but `{token}` does not match "
+            f"the item ID pattern `{pattern.pattern}`"
+        )
+    return None
+
+
+def split_items(
+    parsed_content: list[dict], item_id_pattern: Optional[str] = None
+) -> tuple[list[dict], list[tuple[str, str, list[dict]]]]:
+    """Split a parsed file into its prose and its ``(item_id, title, content)`` items.
+
+    Only H2 headings whose first word matches ``item_id_pattern`` start an item. Any other
+    H2 ends the current item and is kept, with what follows it, as prose.
+    """
+    pattern = _compile_item_id_pattern(item_id_pattern)
+    generic_content: list[dict] = []
+    items: list[tuple[str, str, list[dict]]] = []
+    current: Optional[list[dict]] = None
+    for elem in parsed_content:
+        level = is_ast_element_heading(elem)
+        if level == 2:
+            heading_text = get_heading_text(elem)
+            item_id = _item_id_from_heading(heading_text, pattern)
+            if item_id is not None:
+                title = heading_text.replace(item_id + ":", "").strip()
+                current = []
+                items.append((item_id, title, current))
+                continue
+            current = None
+            generic_content.append(elem)
+            continue
+        if current is not None:
+            current.append(elem)
+        elif level != 1:
+            generic_content.append(elem)
+    return generic_content, items
+
+
+def _paragraph_lines(elem: dict) -> list[str]:
+    if elem.get("type") != "paragraph":
+        return []
+    return [line for line in _flatten_inline_text(elem).splitlines() if line.strip()]
+
+
+def _is_parent_only_paragraph(elem: dict) -> bool:
+    lines = _paragraph_lines(elem)
+    return bool(lines) and all(_PARENT_LINE_PATTERN.match(line) for line in lines)
+
+
+def extract_parent_ids(content: list[dict], item_id_pattern: Optional[str] = None) -> tuple[list[str], list[str]]:
+    """Return ``(parent_ids, malformed_lines)`` from a requirement's top-level paragraphs.
+
+    Repeated parents (for example two identical ``Parent:`` lines) are listed once.
+    """
+    pattern = _compile_item_id_pattern(item_id_pattern)
+    parent_ids: list[str] = []
+    malformed: list[str] = []
+    for elem in content:
+        for line in _paragraph_lines(elem):
+            match = _PARENT_LINE_PATTERN.match(line)
+            if not match:
+                continue
+            ids = [token for token in _ID_TOKEN_PATTERN.findall(match.group(1)) if pattern.fullmatch(token)]
+            if not ids:
+                malformed.append(line.strip())
+            for parent_id in ids:
+                if parent_id not in parent_ids:
+                    parent_ids.append(parent_id)
+    return parent_ids, malformed
+
+
+def extract_autotest_ids(content: list[dict]) -> list[str]:
+    """IDs named by the top-level ``autotest`` code blocks of a test shell, in order, once each.
+
+    Only top-level blocks are collected because only those are rendered.
+    """
+    evidence_ids: list[str] = []
+    for elem in content:
+        if elem.get("type") != "block_code":
+            continue
+        raw_info = str(elem.get("info") or "").strip()
+        if not raw_info or raw_info.split()[0] != "autotest":
+            continue
+        for line in str(elem.get("text", "")).splitlines():
+            evidence_id = line.strip()
+            if evidence_id and evidence_id not in evidence_ids:
+                evidence_ids.append(evidence_id)
+    return evidence_ids
+
+
 class RequirementDocument(SubDocument[Requirement]):
     @staticmethod
-    def item_generator(parsed_content: list[dict]) -> list[Requirement]:
+    def item_generator(parsed_content: list[dict], item_id_pattern: Optional[str] = None) -> list[Requirement]:
         requirements: list[Requirement] = []
-        # Every L2 heading in the page must be a requirement
-        current_req = Requirement(req_id="", content=[], title="", test_ids=[])
-        for elem in parsed_content:
-            if is_ast_element_heading(elem) == 2:
-                if len(current_req.content) > 0:
-                    requirements.append(current_req)
-                    current_req = Requirement(req_id="", content=[], title="", test_ids=[])
-                heading_text = get_heading_text(elem)
-                current_req.req_id = heading_text.split(" ")[0].replace(":", "")
-                current_req.title = heading_text.replace(current_req.req_id + ":", "").strip()
-            else:
-                if current_req.req_id != "":
-                    current_req.content.append(elem)
-        if len(current_req.content) > 0:
-            requirements.append(current_req)
+        for req_id, title, content in split_items(parsed_content, item_id_pattern)[1]:
+            parent_ids, malformed = extract_parent_ids(content, item_id_pattern)
+            requirements.append(
+                Requirement(
+                    req_id=req_id,
+                    content=content,
+                    title=title,
+                    test_ids=[],
+                    parent_ids=parent_ids,
+                    malformed_parent_lines=malformed,
+                )
+            )
         return requirements
 
     @staticmethod
-    def from_file(file_path: str) -> 'RequirementDocument':
-        return SubDocument.from_file_impl(RequirementDocument, file_path, RequirementDocument.item_generator)
+    def from_file(file_path: str, *, item_id_pattern: Optional[str] = None) -> 'RequirementDocument':
+        return SubDocument.from_file_impl(
+            RequirementDocument,
+            file_path,
+            lambda parsed: RequirementDocument.item_generator(parsed, item_id_pattern),
+            item_id_pattern,
+        )
 
 
 class TestDocument(SubDocument[Test]):
@@ -143,28 +301,31 @@ class TestDocument(SubDocument[Test]):
         return requirements
 
     @staticmethod
-    def item_generator(parsed_content: list[dict]) -> list[Test]:
+    def item_generator(parsed_content: list[dict], item_id_pattern: Optional[str] = None) -> list[Test]:
         tests: list[Test] = []
-        current_test = Test(test_id="", content=[], title="", req_ids=[])
-        for elem in parsed_content:
-            if is_ast_element_heading(elem) == 2:
-                if len(current_test.content) > 0:
-                    tests.append(current_test)
-                    current_test = Test(test_id="", content=[], title="", req_ids=[])
-                heading_text = get_heading_text(elem)
-                current_test.test_id = heading_text.split(" ")[0].replace(":", "")
-                current_test.title = heading_text.replace(current_test.test_id + ":", "").strip()
-            else:
-                if current_test.test_id != "":
-                    current_test.content.append(elem)
-                    current_test.req_ids += TestDocument.extract_requirement_ids(elem)
-        if len(current_test.content) > 0:
-            tests.append(current_test)
+        for test_id, title, content in split_items(parsed_content, item_id_pattern)[1]:
+            req_ids: list[str] = []
+            for elem in content:
+                req_ids += TestDocument.extract_requirement_ids(elem)
+            tests.append(
+                Test(
+                    test_id=test_id,
+                    content=content,
+                    title=title,
+                    req_ids=req_ids,
+                    evidence_ids=extract_autotest_ids(content),
+                )
+            )
         return tests
 
     @staticmethod
-    def from_file(file_path: str) -> 'TestDocument':
-        return SubDocument.from_file_impl(TestDocument, file_path, TestDocument.item_generator)
+    def from_file(file_path: str, *, item_id_pattern: Optional[str] = None) -> 'TestDocument':
+        return SubDocument.from_file_impl(
+            TestDocument,
+            file_path,
+            lambda parsed: TestDocument.item_generator(parsed, item_id_pattern),
+            item_id_pattern,
+        )
 
 
 class RiskDocument(SubDocument[Risk]):
@@ -237,64 +398,118 @@ class RiskDocument(SubDocument[Risk]):
         return reqs, tests
 
     @staticmethod
-    def item_generator(parsed_content: list[dict]) -> list[Risk]:
+    def item_generator(parsed_content: list[dict], item_id_pattern: Optional[str] = None) -> list[Risk]:
         risks: list[Risk] = []
-        current_risk = Risk(
-            risk_id="",
-            content=[],
-            title="",
-            attributes={},
-            requirement_refs=[],
-            test_refs=[],
-        )
-        for elem in parsed_content:
-            if is_ast_element_heading(elem) == 2:
-                if len(current_risk.content) > 0:
-                    risks.append(current_risk)
-                    current_risk = Risk(
-                        risk_id="",
-                        content=[],
-                        title="",
-                        attributes={},
-                        requirement_refs=[],
-                        test_refs=[],
-                    )
-                heading_text = get_heading_text(elem)
-                current_risk.risk_id = heading_text.split(" ")[0].replace(":", "")
-                current_risk.title = heading_text.replace(current_risk.risk_id + ":", "").strip()
-            else:
-                if current_risk.risk_id != "":
-                    current_risk.content.append(elem)
-                    extracted_field = RiskDocument._extract_field(elem)
-                    flattened = RiskDocument._flatten_text(elem)
-                    req_refs, test_refs = RiskDocument._extract_references(flattened)
-                    for req in req_refs:
-                        if req not in current_risk.requirement_refs:
-                            current_risk.requirement_refs.append(req)
-                    for test in test_refs:
-                        if test not in current_risk.test_refs:
-                            current_risk.test_refs.append(test)
-                    if extracted_field:
-                        field_name, field_value = extracted_field
-                        current_risk.attributes[field_name] = field_value
-                        # If the field explicitly lists linked requirements/tests, merge them back in
-                        if field_name in {"linked_requirements", "controls"}:
-                            reqs_in_field, _ = RiskDocument._extract_references(field_value)
-                            for req in reqs_in_field:
-                                if req not in current_risk.requirement_refs:
-                                    current_risk.requirement_refs.append(req)
-                        if field_name in {"linked_tests", "controls"}:
-                            _, tests_in_field = RiskDocument._extract_references(field_value)
-                            for test in tests_in_field:
-                                if test not in current_risk.test_refs:
-                                    current_risk.test_refs.append(test)
-        if len(current_risk.content) > 0:
+        for risk_id, title, content in split_items(parsed_content, item_id_pattern)[1]:
+            current_risk = Risk(
+                risk_id=risk_id,
+                content=[],
+                title=title,
+                attributes={},
+                requirement_refs=[],
+                test_refs=[],
+            )
+            for elem in content:
+                current_risk.content.append(elem)
+                extracted_field = RiskDocument._extract_field(elem)
+                flattened = RiskDocument._flatten_text(elem)
+                req_refs, test_refs = RiskDocument._extract_references(flattened)
+                for req in req_refs:
+                    if req not in current_risk.requirement_refs:
+                        current_risk.requirement_refs.append(req)
+                for test in test_refs:
+                    if test not in current_risk.test_refs:
+                        current_risk.test_refs.append(test)
+                if extracted_field:
+                    field_name, field_value = extracted_field
+                    current_risk.attributes[field_name] = field_value
+                    # If the field explicitly lists linked requirements/tests, merge them back in
+                    if field_name in {"linked_requirements", "controls"}:
+                        reqs_in_field, _ = RiskDocument._extract_references(field_value)
+                        for req in reqs_in_field:
+                            if req not in current_risk.requirement_refs:
+                                current_risk.requirement_refs.append(req)
+                    if field_name in {"linked_tests", "controls"}:
+                        _, tests_in_field = RiskDocument._extract_references(field_value)
+                        for test in tests_in_field:
+                            if test not in current_risk.test_refs:
+                                current_risk.test_refs.append(test)
             risks.append(current_risk)
         return risks
 
     @staticmethod
-    def from_file(file_path: str) -> 'RiskDocument':
-        return SubDocument.from_file_impl(RiskDocument, file_path, RiskDocument.item_generator)
+    def from_file(file_path: str, *, item_id_pattern: Optional[str] = None) -> 'RiskDocument':
+        return SubDocument.from_file_impl(
+            RiskDocument,
+            file_path,
+            lambda parsed: RiskDocument.item_generator(parsed, item_id_pattern),
+            item_id_pattern,
+        )
+
+
+@dataclass
+class HierarchyConfig:
+    """``config.yml`` ``hierarchy:`` block. Its presence turns on ``Document.verify_hierarchy``.
+
+    - ``top_level_prefix``: requirement IDs starting with it are Tier 1 (``REQ-VF-T1-``).
+      Every other requirement, outside the procedural files, must then trace to a Tier 1.
+    - ``require_single_parent``: such a requirement must have exactly one parent, a Tier 1.
+    - ``procedural_files``: globs (matched against the path relative to the input directory,
+      or the file name) for files whose requirements have no parent.
+    """
+
+    top_level_prefix: str = ""
+    require_single_parent: bool = False
+    procedural_files: list[str] = field(default_factory=list)
+
+    _KEYS = ("top_level_prefix", "require_single_parent", "procedural_files")
+
+    @classmethod
+    def from_config(cls: type['HierarchyConfig'], raw: Optional[dict]) -> 'HierarchyConfig':
+        if raw is None:
+            raw = {}
+        if not isinstance(raw, dict):
+            raise ValueError("config.yml `hierarchy:` must be a mapping")
+        unknown = sorted(set(raw) - set(cls._KEYS))
+        if unknown:
+            raise ValueError(f"config.yml `hierarchy:` has unknown keys: {unknown} (known: {list(cls._KEYS)})")
+        prefix = raw.get("top_level_prefix") or ""
+        if not isinstance(prefix, str):
+            raise ValueError("config.yml `hierarchy.top_level_prefix` must be a string")
+        single = raw.get("require_single_parent", False)
+        if not isinstance(single, bool):
+            raise ValueError("config.yml `hierarchy.require_single_parent` must be true or false")
+        procedural = raw.get("procedural_files") or []
+        if not isinstance(procedural, list) or not all(isinstance(item, str) for item in procedural):
+            raise ValueError("config.yml `hierarchy.procedural_files` must be a list of file globs")
+        if single and not prefix:
+            raise ValueError("config.yml `hierarchy.require_single_parent` needs `hierarchy.top_level_prefix`")
+        return cls(top_level_prefix=prefix, require_single_parent=single, procedural_files=list(procedural))
+
+
+@dataclass
+class EvidenceBinding:
+    """Where one evidence ID (an ``autotest`` result) is used: every shell that binds it, the
+    requirements those shells verify, and the Tier 1s above those requirements."""
+
+    evidence_id: str
+    shell_ids: list[str] = field(default_factory=list)
+    requirement_ids: list[str] = field(default_factory=list)
+    tier1_ids: list[str] = field(default_factory=list)
+
+
+def path_matches(relative_path: str, patterns: list[str]) -> bool:
+    """True if a corpus-relative POSIX path, or its file name, matches any glob."""
+    name = PurePosixPath(relative_path).name
+    return any(
+        fnmatch.fnmatchcase(relative_path, pattern) or fnmatch.fnmatchcase(name, pattern)
+        for pattern in patterns
+    )
+
+
+def _append_unique(target: list[str], value: str) -> None:
+    if value not in target:
+        target.append(value)
 
 
 @dataclass
@@ -307,6 +522,10 @@ class Document:
     name: str = ""
     input_dir: str = ""
     version: str = ""
+    # ``config.yml`` ``hierarchy:`` block; ``None`` leaves the hierarchy unchecked.
+    hierarchy: Optional[HierarchyConfig] = None
+    # The raw ``config.yml`` mapping (empty when there is none).
+    config: dict = field(default_factory=dict)
 
     def verify_all_ids_unique(self) -> None:
         """ Check if all IDs (both test and requirement) are unique """
@@ -355,10 +574,235 @@ class Document:
                     if test_id not in known_tests:
                         raise ValueError(f"Risk `{risk.risk_id}` references test `{test_id}` which does not exist")
 
+    # ------------------------------------------------------------------ lookups
+
+    def requirements_by_id(self) -> dict[str, Requirement]:
+        return {item.req_id: item for doc in self.requirements for item in doc.items}
+
+    def tests_by_id(self) -> dict[str, Test]:
+        return {item.test_id: item for doc in self.tests for item in doc.items}
+
+    def risks_by_id(self) -> dict[str, Risk]:
+        return {item.risk_id: item for doc in self.risks for item in doc.items}
+
+    def requirement_document_of(self, req_id: str) -> RequirementDocument:
+        for doc in self.requirements:
+            if any(item.req_id == req_id for item in doc.items):
+                return doc
+        raise KeyError(req_id)
+
+    def test_document_of(self, test_id: str) -> TestDocument:
+        for doc in self.tests:
+            if any(item.test_id == test_id for item in doc.items):
+                return doc
+        raise KeyError(test_id)
+
+    def relative_path(self, filename: str) -> str:
+        """A source file's path relative to ``input_dir``, with ``/`` separators."""
+        base = self.input_dir or "."
+        return PurePosixPath(*Path(os.path.relpath(os.path.abspath(filename), os.path.abspath(base))).parts).as_posix()
+
+    # ---------------------------------------------------------------- hierarchy
+
+    def build_hierarchy_links(self) -> None:
+        """Fill ``Requirement.child_ids`` from the parsed ``Parent:`` lines."""
+        index = self.requirements_by_id()
+        for requirement in index.values():
+            requirement.child_ids = []
+        for requirement in index.values():
+            for parent_id in requirement.parent_ids:
+                parent = index.get(parent_id)
+                if parent is not None and parent is not requirement:
+                    _append_unique(parent.child_ids, requirement.req_id)
+
+    def build_risk_links(self) -> None:
+        """Fill ``Requirement.risk_ids`` and ``Test.risk_ids`` from the risk register.
+
+        A requirement is linked to a risk that cites it, or that cites a shell verifying it.
+        """
+        requirements = self.requirements_by_id()
+        tests = self.tests_by_id()
+        for requirement in requirements.values():
+            requirement.risk_ids = []
+        for test in tests.values():
+            test.risk_ids = []
+        for risk_doc in self.risks:
+            for risk in risk_doc.items:
+                for req_id in risk.requirement_refs:
+                    if req_id in requirements:
+                        _append_unique(requirements[req_id].risk_ids, risk.risk_id)
+                for test_id in risk.test_refs:
+                    test = tests.get(test_id)
+                    if test is None:
+                        continue
+                    _append_unique(test.risk_ids, risk.risk_id)
+                    for req_id in test.req_ids:
+                        if req_id in requirements:
+                            _append_unique(requirements[req_id].risk_ids, risk.risk_id)
+
+    def _effective_hierarchy(self, config: Optional[HierarchyConfig]) -> HierarchyConfig:
+        if config is not None:
+            return config
+        return self.hierarchy if self.hierarchy is not None else HierarchyConfig()
+
+    def is_tier1(self, req_id: str, config: Optional[HierarchyConfig] = None) -> bool:
+        prefix = self._effective_hierarchy(config).top_level_prefix
+        return bool(prefix) and req_id.startswith(prefix)
+
+    def tier1_requirements(self, config: Optional[HierarchyConfig] = None) -> list[Requirement]:
+        """Tier 1 requirements in corpus order (empty without a ``top_level_prefix``)."""
+        return [item for doc in self.requirements for item in doc.items if self.is_tier1(item.req_id, config)]
+
+    def procedural_requirement_ids(self, config: Optional[HierarchyConfig] = None) -> list[str]:
+        """Requirements in the files the hierarchy config lists as procedural."""
+        patterns = self._effective_hierarchy(config).procedural_files
+        if not patterns:
+            return []
+        return [
+            item.req_id
+            for doc in self.requirements
+            if path_matches(self.relative_path(doc.filename), patterns)
+            for item in doc.items
+        ]
+
+    def tier1_ids_of(self, req_id: str, config: Optional[HierarchyConfig] = None) -> list[str]:
+        """The Tier 1 requirement(s) a requirement traces to through ``Parent:`` lines.
+
+        A Tier 1 traces to itself. The walk is cycle-safe, and the result is in the order the
+        ancestors are reached.
+        """
+        index = self.requirements_by_id()
+        found: list[str] = []
+        seen: set[str] = set()
+        pending = [req_id]
+        while pending:
+            current = pending.pop(0)
+            if current in seen:
+                continue
+            seen.add(current)
+            if self.is_tier1(current, config):
+                _append_unique(found, current)
+                continue
+            requirement = index.get(current)
+            if requirement is not None:
+                pending.extend(requirement.parent_ids)
+        return found
+
+    def hierarchy_errors(self, config: Optional[HierarchyConfig] = None) -> list[str]:
+        """Every hierarchy problem, as messages. ``verify_hierarchy`` raises on any of them."""
+        effective = self._effective_hierarchy(config)
+        index = self.requirements_by_id()
+        procedural = set(self.procedural_requirement_ids(effective))
+        errors: list[str] = []
+        for requirement in index.values():
+            for line in requirement.malformed_parent_lines:
+                errors.append(f"Requirement `{requirement.req_id}` has a Parent line that names no ID: `{line}`")
+            for parent_id in requirement.parent_ids:
+                if parent_id == requirement.req_id:
+                    errors.append(f"Requirement `{requirement.req_id}` names itself as its parent")
+                elif parent_id not in index:
+                    errors.append(
+                        f"Requirement `{requirement.req_id}` names parent `{parent_id}`, which is not a requirement"
+                    )
+        errors.extend(self._parent_cycle_errors(index))
+
+        prefix = effective.top_level_prefix
+        if prefix:
+            for requirement in index.values():
+                req_id = requirement.req_id
+                parents = requirement.parent_ids
+                if req_id in procedural:
+                    if parents:
+                        errors.append(
+                            f"Requirement `{req_id}` is in a procedural file and must not name a parent "
+                            f"(names {', '.join(parents)})"
+                        )
+                    continue
+                if self.is_tier1(req_id, effective):
+                    if parents:
+                        errors.append(
+                            f"Tier 1 requirement `{req_id}` must not name a parent (names {', '.join(parents)})"
+                        )
+                    continue
+                if effective.require_single_parent:
+                    if len(parents) != 1 or not self.is_tier1(parents[0], effective) or parents[0] not in index:
+                        named = ", ".join(parents) if parents else "none"
+                        errors.append(
+                            f"Requirement `{req_id}` must have exactly one Tier 1 parent ({prefix}*); it names: {named}"
+                        )
+                elif not self.tier1_ids_of(req_id, effective):
+                    errors.append(f"Requirement `{req_id}` does not trace to any Tier 1 requirement ({prefix}*)")
+        return errors
+
+    @staticmethod
+    def _parent_cycle_errors(index: dict[str, Requirement]) -> list[str]:
+        """One message per distinct cycle in the parent graph (self-parents are reported apart)."""
+        errors: list[str] = []
+        reported: set[tuple[str, ...]] = set()
+        state: dict[str, int] = {}  # 1 = on the current path, 2 = finished
+
+        def visit(req_id: str, path: list[str]) -> None:
+            state[req_id] = 1
+            path.append(req_id)
+            for parent_id in index[req_id].parent_ids:
+                if parent_id == req_id or parent_id not in index:
+                    continue
+                if state.get(parent_id) == 1:
+                    cycle = path[path.index(parent_id):]
+                    start = cycle.index(min(cycle))
+                    key = tuple(cycle[start:] + cycle[:start])
+                    if key not in reported:
+                        reported.add(key)
+                        errors.append("Parent cycle: " + " -> ".join(key + (key[0],)))
+                elif parent_id not in state:
+                    visit(parent_id, path)
+            path.pop()
+            state[req_id] = 2
+
+        for req_id in index:
+            if req_id not in state:
+                visit(req_id, [])
+        return errors
+
+    def verify_hierarchy(self, config: Optional[HierarchyConfig] = None) -> None:
+        """Fail on an unknown parent, a self-parent, a cycle, a malformed Parent line and, with
+        a ``top_level_prefix``, a requirement that does not trace to exactly one Tier 1 (or, with
+        ``require_single_parent``, does not have exactly one Tier 1 parent)."""
+        errors = self.hierarchy_errors(config)
+        if errors:
+            raise ValueError("Requirement hierarchy check failed:\n  - " + "\n  - ".join(errors))
+
+    # ----------------------------------------------------------------- evidence
+
+    def evidence_bindings(self, config: Optional[HierarchyConfig] = None) -> dict[str, EvidenceBinding]:
+        """Map each evidence ID to the shells that bind it, their requirements and Tier 1s.
+
+        Keys are in the order the IDs first appear in the corpus.
+        """
+        requirement_ids = set(self.requirements_by_id())
+        bindings: dict[str, EvidenceBinding] = {}
+        for test_doc in self.tests:
+            for test in test_doc.items:
+                for evidence_id in test.evidence_ids:
+                    binding = bindings.setdefault(evidence_id, EvidenceBinding(evidence_id=evidence_id))
+                    _append_unique(binding.shell_ids, test.test_id)
+                    for req_id in test.req_ids:
+                        _append_unique(binding.requirement_ids, req_id)
+        for binding in bindings.values():
+            for req_id in binding.requirement_ids:
+                if req_id in requirement_ids:
+                    for tier1_id in self.tier1_ids_of(req_id, config):
+                        _append_unique(binding.tier1_ids, tier1_id)
+        return bindings
+
     def __post_init__(self) -> None:
         self.verify_all_ids_unique()
         self.build_traceability_matrices()
         self.verify_risk_references()
+        self.build_hierarchy_links()
+        self.build_risk_links()
+        if self.hierarchy is not None:
+            self.verify_hierarchy()
 
 
 def read_file(file_path: str) -> str:
@@ -371,46 +815,93 @@ def parse_markdown(content: str) -> list[dict]:
     return parser(content)
 
 
+def load_config(directory: str) -> dict:
+    """Read ``<directory>/config.yml``; an absent or empty file is ``{}``."""
+    config_file_path = os.path.join(os.path.abspath(directory), "config.yml")
+    if not os.path.exists(config_file_path):
+        return {}
+    with open(config_file_path, "r") as config_file:
+        config = yaml.safe_load(config_file)
+    if config is None:
+        return {}
+    if not isinstance(config, dict):
+        raise ValueError(f"{config_file_path} must hold a mapping")
+    return config
+
+
+def _sort_key(relative_path: str) -> tuple[str, str]:
+    return relative_path.casefold(), relative_path
+
+
+def ordered_markdown_files(directory: str, order: Optional[list[str]] = None) -> list[str]:
+    """Every ``.md`` file under ``directory``, as corpus-relative POSIX paths.
+
+    Files are sorted by path (case-insensitively, so the order does not depend on the file
+    system). An ``order:`` list of globs from ``config.yml`` moves matching files to the
+    front, in list order; a glob that matches nothing is an error.
+    """
+    relative_paths: list[str] = []
+    for root, dirs, files in os.walk(directory):
+        dirs.sort(key=lambda name: (name.casefold(), name))
+        for file in files:
+            if file.endswith(".md"):
+                relative = os.path.relpath(os.path.join(root, file), directory)
+                relative_paths.append(PurePosixPath(*Path(relative).parts).as_posix())
+    relative_paths.sort(key=_sort_key)
+    if not order:
+        return relative_paths
+    if not isinstance(order, list) or not all(isinstance(entry, str) for entry in order):
+        raise ValueError("config.yml `order:` must be a list of file globs")
+    unmatched = [entry for entry in order if not any(path_matches(path, [entry]) for path in relative_paths)]
+    if unmatched:
+        raise ValueError(f"config.yml `order:` entries match no Markdown file: {unmatched}")
+
+    def rank(relative_path: str) -> int:
+        for position, entry in enumerate(order):
+            if path_matches(relative_path, [entry]):
+                return position
+        return len(order)
+
+    return sorted(relative_paths, key=lambda path: (rank(path),) + _sort_key(path))
+
+
 def process_directory(directory: str, version: str) -> Document:
     requirements = []
     tests = []
     risks = []
     design_documents: list[MarkdownDocument] = []
     supplementary_documents: list[MarkdownDocument] = []
-    for root, _, files in os.walk(directory):
-        for file in files:
-            if file.endswith(".md"):
-                file_path = os.path.join(root, file)
-                relative_path = os.path.relpath(file_path, directory)
-                path_components = [part.lower() for part in Path(relative_path).parts]
-                top_component = path_components[0]
-                filename_component = path_components[-1]
+    config = load_config(directory)
+    item_id_pattern = config.get("item_id_pattern")
+    if item_id_pattern is not None and not isinstance(item_id_pattern, str):
+        raise ValueError("config.yml `item_id_pattern` must be a string")
+    _compile_item_id_pattern(item_id_pattern)
+    hierarchy = HierarchyConfig.from_config(config["hierarchy"]) if "hierarchy" in config else None
 
-                if top_component.startswith("req") or filename_component.startswith("req"):
-                    requirements.append(RequirementDocument.from_file(file_path))
-                elif top_component.startswith("test") or filename_component.startswith("test"):
-                    tests.append(TestDocument.from_file(file_path))
-                elif (
-                    top_component.startswith("risk")
-                    or filename_component.startswith("risk")
-                    or top_component.startswith("hazard")
-                    or filename_component.startswith("hazard")
-                ):
-                    risks.append(RiskDocument.from_file(file_path))
-                elif top_component.startswith("design") or filename_component.startswith("design"):
-                    design_documents.append(MarkdownDocument.from_file(file_path, category="design"))
-                else:
-                    supplementary_documents.append(MarkdownDocument.from_file(file_path, category="general"))
+    for relative_path in ordered_markdown_files(directory, config.get("order")):
+        file_path = os.path.join(directory, *PurePosixPath(relative_path).parts)
+        path_components = [part.lower() for part in PurePosixPath(relative_path).parts]
+        top_component = path_components[0]
+        filename_component = path_components[-1]
+
+        if top_component.startswith("req") or filename_component.startswith("req"):
+            requirements.append(RequirementDocument.from_file(file_path, item_id_pattern=item_id_pattern))
+        elif top_component.startswith("test") or filename_component.startswith("test"):
+            tests.append(TestDocument.from_file(file_path, item_id_pattern=item_id_pattern))
+        elif (
+            top_component.startswith("risk")
+            or filename_component.startswith("risk")
+            or top_component.startswith("hazard")
+            or filename_component.startswith("hazard")
+        ):
+            risks.append(RiskDocument.from_file(file_path, item_id_pattern=item_id_pattern))
+        elif top_component.startswith("design") or filename_component.startswith("design"):
+            design_documents.append(MarkdownDocument.from_file(file_path, category="design"))
+        else:
+            supplementary_documents.append(MarkdownDocument.from_file(file_path, category="general"))
     absolute_dir_path = os.path.abspath(directory)
 
-    # Check if config.yml exists in the directory
-    config_file_path = os.path.join(absolute_dir_path, "config.yml")
-    name = directory
-    if os.path.exists(config_file_path):
-        with open(config_file_path, "r") as config_file:
-            config = yaml.safe_load(config_file)
-            if "name" in config:
-                name = config["name"]
+    name = config.get("name", directory)
     return Document(
         requirements=requirements,
         tests=tests,
@@ -420,6 +911,8 @@ def process_directory(directory: str, version: str) -> Document:
         name=name,
         input_dir=absolute_dir_path,
         version=version,
+        hierarchy=hierarchy,
+        config=config,
     )
 
 
@@ -437,7 +930,9 @@ def get_heading_text(elem: dict) -> str:
             text += child["text"]
         if child["type"] == "codespan":
             text += f" `{child['text']}` "
-    return text.strip()
+    # A non-breaking space (``##\u00a0REQ-...`` or ``REQ-X:\u00a0Title``) would otherwise glue
+    # the ID to the title.
+    return text.replace("\u00a0", " ").strip()
 
 
 def extract_title(parsed_content: list[dict]) -> str:
