@@ -14,7 +14,7 @@ import struct
 import textwrap
 import zlib
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import pytest
 
@@ -86,7 +86,7 @@ def _result_md(evidence_id: str, *, status: str = "passed", requirement: str = "
     return "\n".join(lines)
 
 
-def _write_result(results: Path, evidence_id: str, **kwargs: object) -> Path:
+def _write_result(results: Path, evidence_id: str, **kwargs: Any) -> Path:  # noqa: ANN401
     folder = results / evidence_id
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "result.md").write_text(_result_md(evidence_id, **kwargs))
@@ -133,7 +133,7 @@ def fake_latex(monkeypatch: pytest.MonkeyPatch) -> _FakeLatex:
     return fake
 
 
-def _corpus_with_results(tmp_path: Path, **result_kwargs: object) -> tuple[Path, Path]:
+def _corpus_with_results(tmp_path: Path, **result_kwargs: Any) -> tuple[Path, Path]:  # noqa: ANN401
     corpus = _corpus(tmp_path / "corpus")
     results = tmp_path / "results"
     for evidence_id in ["PY-UPLOAD", "PW-SHARED-X", "PY-AUDIT-CLAUSE", "PY-CLAUSE-ONLY", "PY-REPORT", "PW-JOURNEY"]:
@@ -304,7 +304,7 @@ def test_legacy_block_drops_caption_lines_and_keeps_the_whole_description(tmp_pa
 # ------------------------------------------------------------------ record layout
 
 
-def _render_record(tmp_path: Path, results: Path, evidence_id: str, **options: object) -> str:
+def _render_record(tmp_path: Path, results: Path, evidence_id: str, **options: Any) -> str:  # noqa: ANN401
     report = _report(tmp_path, results)
     report.evidence_layout = "record"
     for name, value in options.items():
@@ -517,7 +517,7 @@ def test_reference_mode_fails_on_a_stale_status(tmp_path: Path, fake_latex: _Fak
 # ------------------------------------------------------------------ evidence volumes
 
 
-def _volume_render(tmp_path: Path, volume: str, **kwargs: object) -> tuple[PdfReport, dict, Path]:
+def _volume_render(tmp_path: Path, volume: str, **kwargs: Any) -> tuple[PdfReport, dict, Path]:  # noqa: ANN401
     corpus, results = _corpus_with_results(tmp_path, figure=True, output=True)
     document = process_directory(str(corpus), version="2.0")
     plan = plan_volumes(document, parse_manifest(_manifest()))

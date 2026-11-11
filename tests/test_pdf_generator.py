@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from traceflow.pdf_generator import PdfReport
 from traceflow.parser import (
@@ -145,11 +145,11 @@ class TestPdfGenerator(unittest.TestCase):
         report = PdfReport(self._build_document())
         cover_flags: list[Optional[bool]] = []
 
-        def fake_render(self: PdfReport, **kwargs: object) -> bytes:  # type: ignore[override]
+        def fake_render(**kwargs: Any) -> bytes:  # noqa: ANN401
             cover_flags.append(kwargs.get("include_cover_page"))
             return b"%PDF-FAKE"
 
-        report.render = fake_render.__get__(report, PdfReport)
+        setattr(report, "render", fake_render)  # noqa: B010 - replaces the bound method on this instance
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir) / "output"
             outputs = report.render_individual_pdfs(str(base))
