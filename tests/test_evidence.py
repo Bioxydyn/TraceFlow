@@ -301,7 +301,8 @@ def test_load_autotest_result_from_json_only(tmp_path: Path) -> None:
 
 def test_workflow_record_from_json_has_jobs(tmp_path: Path) -> None:
     record_dir = tmp_path / "WF-REACTJS"
-    _contract_json(record_dir, kind="workflow", figures=[], assertions=[], jobs=[{"name": "build", "conclusion": "success"}])
+    jobs = [{"name": "build", "conclusion": "success"}]
+    _contract_json(record_dir, kind="workflow", figures=[], assertions=[], jobs=jobs)
     record = load_evidence_record(str(record_dir), "WF-REACTJS")
     assert record.kind == "workflow"
     assert [(job.name, job.conclusion) for job in record.jobs] == [("build", "success")]

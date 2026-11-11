@@ -657,13 +657,16 @@ def plan_volumes(document: Document, manifest: VolumeManifest) -> VolumePlan:
         elif candidates:
             home_shell = min(candidates, key=home_key)
             reason = shells[home_shell].shell_class
-        elif not any(shells[shell_id].tier1_ids for shell_id in binding.shell_ids):
-            # Shells that trace to a Tier 1 but have no volume are already reported (an
-            # unassigned Tier 1 or a shell spanning volumes); only procedural or
-            # requirement-less bindings are a problem of their own.
+        elif all(
+            shells[shell_id].shell_class == SHELL_PROCEDURAL or not shells[shell_id].requirement_ids
+            for shell_id in binding.shell_ids
+        ):
+            # Other volume-less shells are already reported (an unassigned Tier 1, a shell
+            # spanning volumes, a requirement that does not trace to a Tier 1).
             errors.append(
                 f"evidence `{evidence_id}` is bound only by shells outside every volume "
-                f"({', '.join(binding.shell_ids)}); give it a home override or move the binding"
+                f"({', '.join(binding.shell_ids)}), which are procedural or verify no requirement; "
+                "bind it from a shell under a Tier 1 or remove the binding"
             )
         if home_shell is None:
             continue

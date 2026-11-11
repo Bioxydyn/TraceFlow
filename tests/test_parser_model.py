@@ -21,6 +21,9 @@ def _write(path: Path, content: str, extra: str = "") -> None:
     path.write_text(textwrap.dedent(content).strip() + "\n" + extra)
 
 
+PROCEDURAL_FILE = "# Procedural\n\n## REQ-PROC-001: Letter\n\nSend it.\n"
+
+
 def _write_config(root: Path, content: str) -> None:
     _write(root / "config.yml", content)
 
@@ -194,7 +197,10 @@ def test_non_id_headings_stay_prose(tmp_path: Path) -> None:
     gaps = document.tests[0]
     assert gaps.items == []
     headings = [elem for elem in gaps.generic_content if elem["type"] == "heading"]
-    assert [elem["children"][0]["text"] for elem in headings] == ["Automated today", "Allowlisted gaps (machine-readable)"]
+    assert [elem["children"][0]["text"] for elem in headings] == [
+        "Automated today",
+        "Allowlisted gaps (machine-readable)",
+    ]
 
 
 def test_prose_heading_after_an_item_ends_the_item(tmp_path: Path) -> None:
@@ -321,7 +327,7 @@ def test_valid_hierarchy_passes(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("extra", "message"),
     [
-        ("\n## REQ-UP-009: Orphan\n\nParent: REQ-NOPE-001\n", "names parent `REQ-NOPE-001`, which is not a requirement"),
+        ("\n## REQ-UP-009: Orphan\n\nParent: REQ-NOPE-001\n", "names parent `REQ-NOPE-001`, which is not a"),
         ("\n## REQ-UP-009: Self\n\nParent: REQ-UP-009\n", "names itself as its parent"),
         ("\n## REQ-UP-009: None\n\nNo parent here.\n", "must have exactly one Tier 1 parent"),
         ("\n## REQ-UP-009: Two\n\nParent: REQ-T1-001, REQ-T1-002\n", "must have exactly one Tier 1 parent"),
@@ -379,7 +385,7 @@ def test_without_single_parent_a_tier2_may_trace_through_another_tier2(tmp_path:
 
 def test_procedural_files_are_exempt_but_must_stay_parentless(tmp_path: Path) -> None:
     _two_level_corpus(tmp_path)
-    _write(tmp_path / "requirements" / "Procedural Controls.md", "# Procedural\n\n## REQ-PROC-001: Letter\n\nSend it.\n")
+    _write(tmp_path / "requirements" / "Procedural Controls.md", PROCEDURAL_FILE)
     _write_config(tmp_path, _hierarchy_config(procedural_files="['Procedural Controls.md']"))
     document = process_directory(str(tmp_path), version="1")
     assert document.procedural_requirement_ids() == ["REQ-PROC-001"]
@@ -433,7 +439,8 @@ def test_evidence_bindings_without_hierarchy_have_no_tier1(tmp_path: Path) -> No
     _two_level_corpus(tmp_path)
     bindings = process_directory(str(tmp_path), version="1").evidence_bindings()
     assert bindings["PW-SHARED"].tier1_ids == []
-    explicit = process_directory(str(tmp_path), version="1").evidence_bindings(HierarchyConfig(top_level_prefix="REQ-T1-"))
+    document = process_directory(str(tmp_path), version="1")
+    explicit = document.evidence_bindings(HierarchyConfig(top_level_prefix="REQ-T1-"))
     assert explicit["PW-SHARED"].tier1_ids == ["REQ-T1-001", "REQ-T1-002"]
 
 
@@ -445,3 +452,26 @@ def test_nested_autotest_blocks_are_not_bound(tmp_path: Path) -> None:
     )
     document = process_directory(str(tmp_path), version="1")
     assert document.tests_by_id()["TEST-1"].evidence_ids == ["PY-1"]
+
+
+def test_procedural_match_does_not_depend_on_the_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _two_level_corpus(tmp_path)
+    _write(tmp_path / "requirements" / "Procedural Controls.md", PROCEDURAL_FILE)
+    monkeypatch.chdir(tmp_path)
+    document = process_directory("requirements/..", version="1")
+    assert document.requirements[0].source_path == "requirements/Procedural Controls.md"
+    # The renderer runs inside ./report; matching must still work there.
+    (tmp_path / "report").mkdir()
+    monkeypatch.chdir(tmp_path / "report")
+    config = HierarchyConfig(top_level_prefix="REQ-T1-", procedural_files=["requirements/Procedural Controls.md"])
+    assert document.procedural_requirement_ids(config) == ["REQ-PROC-001"]
+
+
+def test_unknown_parent_is_reported_once(tmp_path: Path) -> None:
+    _two_level_corpus(tmp_path, extra_tier2="\n## REQ-UP-009: Orphan\n\nParent: REQ-T1-099\n")
+    _write_config(tmp_path, _hierarchy_config())
+    with pytest.raises(ValueError) as raised:
+        process_directory(str(tmp_path), version="1")
+    assert str(raised.value).count("REQ-UP-009") == 1

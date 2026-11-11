@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import textwrap
 from pathlib import Path
-from typing import Any
 
 import pytest
 import yaml
@@ -15,6 +14,7 @@ from traceflow.volumes import (
     DEFAULT_REGULATORY_FAMILIES,
     ManifestError,
     VolumePartitionError,
+    VolumePlan,
     check_volumes,
     load_manifest,
     parse_manifest,
@@ -22,6 +22,7 @@ from traceflow.volumes import (
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
+PROCEDURAL_FILE = "# Procedural\n\n## REQ-VOX-PROC-001: Letter\n\nSend it.\n"
 
 
 def _write(path: Path, content: str, extra: str = "") -> None:
@@ -93,7 +94,7 @@ def _corpus(root: Path, *, extra_requirements: str = "", extra_tests: str = "") 
     return root
 
 
-def _manifest(**overrides: Any) -> dict:
+def _manifest(**overrides: object) -> dict:
     manifest: dict = {
         "structure_revision": 1,
         "report": {"code": "BXD-VF-019", "title": "Traceability Report"},
@@ -121,7 +122,7 @@ def _manifest(**overrides: Any) -> dict:
     return manifest
 
 
-def _plan(root: Path, manifest: dict):  # noqa: ANN202 - VolumePlan, kept short for the tests
+def _plan(root: Path, manifest: dict) -> VolumePlan:
     return plan_volumes(process_directory(str(root), version="1"), parse_manifest(manifest))
 
 
@@ -215,7 +216,9 @@ def test_requirements_and_shells_follow_their_tier1(tmp_path: Path) -> None:
     assert plan.requirement_volume["REQ-VOX-21CFR11-001"] == "BXD-VF-019-E02"
     # Corpus order: "Family Requirements.md" sorts before "Tier 1 Requirements.md".
     assert plan.requirement_ids("ingestion") == ["REQ-VOX-UPLOAD-001", "REQ-VF-T1-001"]
-    classes = {shell_id: (shell.volume_code, shell.tier1_id, shell.shell_class) for shell_id, shell in plan.shells.items()}
+    classes = {
+        shell_id: (shell.volume_code, shell.tier1_id, shell.shell_class) for shell_id, shell in plan.shells.items()
+    }
     assert classes == {
         "TEST-VOX-UPLOAD-001": ("BXD-VF-019-E01", "REQ-VF-T1-001", "functional"),
         "TEST-VOX-21CFR11-001": ("BXD-VF-019-E02", "REQ-VF-T1-002", "regulatory"),
@@ -258,7 +261,10 @@ def test_every_record_has_exactly_one_home(tmp_path: Path) -> None:
 def test_layout_groups_by_tier1_with_journey_shells_first(tmp_path: Path) -> None:
     plan = _plan(_corpus(tmp_path), _manifest())
     layout = plan.layout("BXD-VF-019-E02")
-    assert [(group.tier1_id, group.title) for group in layout] == [("REQ-VF-T1-002", "Audit"), ("REQ-VF-T1-003", "Report")]
+    assert [(group.tier1_id, group.title) for group in layout] == [
+        ("REQ-VF-T1-002", "Audit"),
+        ("REQ-VF-T1-003", "Report"),
+    ]
     assert [shell.shell_id for shell in layout[0].shells] == [
         "TEST-VF-T1-002",
         "TEST-VOX-21CFR11-001",
@@ -338,7 +344,10 @@ def test_manifest_tier1_must_be_a_corpus_tier1(tmp_path: Path, tier1: str, messa
 
 
 def test_shell_spanning_two_volumes_fails(tmp_path: Path) -> None:
-    extra = "\n## TEST-VOX-MIXED-001: Mixed\n\n**Requirement ID:** REQ-VOX-UPLOAD-001\n\n**Requirement ID:** REQ-VOX-REPORT-001\n"
+    extra = (
+        "\n## TEST-VOX-MIXED-001: Mixed\n\n"
+        "**Requirement ID:** REQ-VOX-UPLOAD-001\n\n**Requirement ID:** REQ-VOX-REPORT-001\n"
+    )
     with pytest.raises(VolumePartitionError, match="shell `TEST-VOX-MIXED-001` verifies requirements in two volumes"):
         _plan(_corpus(tmp_path, extra_tests=extra), _manifest())
 
@@ -359,7 +368,7 @@ def test_single_parent_rule_comes_from_the_manifest(tmp_path: Path) -> None:
 
 def test_procedural_requirements_have_no_volume(tmp_path: Path) -> None:
     _corpus(tmp_path)
-    _write(tmp_path / "requirements" / "Procedural Controls.md", "# Procedural\n\n## REQ-VOX-PROC-001: Letter\n\nSend it.\n")
+    _write(tmp_path / "requirements" / "Procedural Controls.md", PROCEDURAL_FILE)
     manifest = _manifest(procedural_files=["Procedural Controls.md"])
     plan = _plan(tmp_path, manifest)
     assert plan.procedural_requirement_ids == ["REQ-VOX-PROC-001"]
@@ -372,9 +381,11 @@ def test_procedural_requirements_have_no_volume(tmp_path: Path) -> None:
 def test_evidence_bound_only_by_procedural_shells_fails(tmp_path: Path) -> None:
     _corpus(
         tmp_path,
-        extra_tests="\n## TEST-VOX-PROC-001: Letter\n\n**Requirement ID:** REQ-VOX-PROC-001\n\n```autotest\nPY-PROC\n```\n",
+        extra_tests=(
+            "\n## TEST-VOX-PROC-001: Letter\n\n**Requirement ID:** REQ-VOX-PROC-001\n\n```autotest\nPY-PROC\n```\n"
+        ),
     )
-    _write(tmp_path / "requirements" / "Procedural Controls.md", "# Procedural\n\n## REQ-VOX-PROC-001: Letter\n\nSend it.\n")
+    _write(tmp_path / "requirements" / "Procedural Controls.md", PROCEDURAL_FILE)
     manifest = _manifest(procedural_files=["Procedural Controls.md"])
     with pytest.raises(VolumePartitionError, match="`PY-PROC` is bound only by shells outside every volume"):
         _plan(tmp_path, manifest)
@@ -403,7 +414,11 @@ def test_plan_to_dict_is_the_id_to_volume_map(tmp_path: Path) -> None:
     report = _plan(_corpus(tmp_path), _manifest()).to_dict()
     assert report["ok"] is True and report["errors"] == []
     assert report["report"] == {"code": "BXD-VF-019", "title": "Traceability Report"}
-    assert [(v["code"], v["index"], v["of"], v["home_record_count"], v["pointer_record_count"]) for v in report["volumes"]] == [
+    counts = [
+        (volume["code"], volume["index"], volume["of"], volume["home_record_count"], volume["pointer_record_count"])
+        for volume in report["volumes"]
+    ]
+    assert counts == [
         ("BXD-VF-019-E01", 1, 2, 3, 0),
         ("BXD-VF-019-E02", 2, 2, 3, 1),
     ]
@@ -456,7 +471,7 @@ def test_check_volumes_reports_parse_and_partition_errors(tmp_path: Path) -> Non
     assert code == 1 and report["errors"]
 
 
-def test_cli_check_volumes_prints_only_json_on_stdout(tmp_path: Path, capsys: Any) -> None:
+def test_cli_check_volumes_prints_only_json_on_stdout(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     corpus = _corpus(tmp_path / "corpus")
     # A shell whose Requirement ID line is empty makes the parser print a warning.
     with open(corpus / "tests" / "Family Tests.md", "a") as handle:
@@ -477,6 +492,23 @@ def test_cli_check_volumes_prints_only_json_on_stdout(tmp_path: Path, capsys: An
     assert "ERROR: Tier 1 `REQ-VF-T1-002` is in two volumes" in captured.err
 
 
-def test_cli_render_still_needs_version_and_output(tmp_path: Path, capsys: Any) -> None:
+def test_cli_render_still_needs_version_and_output(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert traceflow_main._run(str(tmp_path)) == 2
     assert "needs DIRECTORY VERSION OUTPUT" in capsys.readouterr().err
+
+
+def test_untraced_requirement_is_reported_once(tmp_path: Path) -> None:
+    extra = "\n## REQ-VOX-LOOSE-001: No parent\n\nLoose.\n"
+    tests = "\n## TEST-VOX-LOOSE-001: Loose\n\n**Requirement ID:** REQ-VOX-LOOSE-001\n\n```autotest\nPY-LOOSE\n```\n"
+    with pytest.raises(VolumePartitionError) as raised:
+        _plan(_corpus(tmp_path, extra_requirements=extra, extra_tests=tests), _manifest())
+    assert isinstance(raised.value, VolumePartitionError)
+    assert raised.value.errors == [
+        "Requirement `REQ-VOX-LOOSE-001` must have exactly one Tier 1 parent (REQ-VF-T1-*); it names: none"
+    ]
+
+
+def test_requirement_less_shell_evidence_has_no_home(tmp_path: Path) -> None:
+    tests = "\n## TEST-VOX-BARE-001: Bare\n\n```autotest\nPY-BARE\n```\n"
+    with pytest.raises(VolumePartitionError, match="`PY-BARE` is bound only by shells outside every volume"):
+        _plan(_corpus(tmp_path, extra_tests=tests), _manifest())

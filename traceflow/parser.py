@@ -125,6 +125,8 @@ class SubDocument(Generic[T]):
     generic_content: list[dict]
     filename: str
     items: List[T]
+    # Path relative to the input directory, with ``/`` separators (set by ``process_directory``).
+    source_path: str = ""
 
     @staticmethod
     def from_file_impl(
@@ -661,7 +663,7 @@ class Document:
         return [
             item.req_id
             for doc in self.requirements
-            if path_matches(self.relative_path(doc.filename), patterns)
+            if path_matches(doc.source_path or self.relative_path(doc.filename), patterns)
             for item in doc.items
         ]
 
@@ -724,8 +726,10 @@ class Document:
                             f"Tier 1 requirement `{req_id}` must not name a parent (names {', '.join(parents)})"
                         )
                     continue
+                if any(parent_id not in index or parent_id == req_id for parent_id in parents):
+                    continue  # already reported as an unknown parent or a self-parent
                 if effective.require_single_parent:
-                    if len(parents) != 1 or not self.is_tier1(parents[0], effective) or parents[0] not in index:
+                    if len(parents) != 1 or not self.is_tier1(parents[0], effective):
                         named = ", ".join(parents) if parents else "none"
                         errors.append(
                             f"Requirement `{req_id}` must have exactly one Tier 1 parent ({prefix}*); it names: {named}"
@@ -885,16 +889,22 @@ def process_directory(directory: str, version: str) -> Document:
         filename_component = path_components[-1]
 
         if top_component.startswith("req") or filename_component.startswith("req"):
-            requirements.append(RequirementDocument.from_file(file_path, item_id_pattern=item_id_pattern))
+            requirement_doc = RequirementDocument.from_file(file_path, item_id_pattern=item_id_pattern)
+            requirement_doc.source_path = relative_path
+            requirements.append(requirement_doc)
         elif top_component.startswith("test") or filename_component.startswith("test"):
-            tests.append(TestDocument.from_file(file_path, item_id_pattern=item_id_pattern))
+            test_doc = TestDocument.from_file(file_path, item_id_pattern=item_id_pattern)
+            test_doc.source_path = relative_path
+            tests.append(test_doc)
         elif (
             top_component.startswith("risk")
             or filename_component.startswith("risk")
             or top_component.startswith("hazard")
             or filename_component.startswith("hazard")
         ):
-            risks.append(RiskDocument.from_file(file_path, item_id_pattern=item_id_pattern))
+            risk_doc = RiskDocument.from_file(file_path, item_id_pattern=item_id_pattern)
+            risk_doc.source_path = relative_path
+            risks.append(risk_doc)
         elif top_component.startswith("design") or filename_component.startswith("design"):
             design_documents.append(MarkdownDocument.from_file(file_path, category="design"))
         else:
