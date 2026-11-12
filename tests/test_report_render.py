@@ -532,3 +532,16 @@ def test_how_to_read_matches_the_chapter_order_and_row_format(tmp_path: Path, fa
     # Chapters follow the manifest's volumes, and the example cites a volume as the rows do.
     assert "a chapter, in the order of the evidence volumes, holding" in how
     assert "(for example \\textit{\\mbox{E01} p.~14} (E01 is BXD-VF-019-E01))" in how
+
+
+def test_risk_trace_summarises_controls_and_points_to_the_register(tmp_path: Path, fake_latex: _FakeLatex) -> None:
+    from traceflow.report_latex import StructureRenderer
+
+    renderer = StructureRenderer.__new__(StructureRenderer)
+    renderer.report = type("R", (), {"process_text": staticmethod(lambda text: text)})()
+    renderer.risk_register_ref = "BXD-VF-020 Risk Register, issued with this report"
+    long_text = "First control; " + "the second clause runs on " * 12 + ". A third sentence."
+    summary = renderer.control_summary(long_text, "RISK-VOX-001")
+    assert summary.startswith("First control;") and "A third sentence" not in summary
+    assert summary.endswith("\\textit{(full text: BXD-VF-020 Risk Register, RISK-VOX-001)}")
+    assert renderer.control_summary("Short.", "RISK-VOX-001") == "Short."

@@ -842,21 +842,27 @@ class StructureRenderer:
             "row." + where + "\n\n"
             + row_tables(
                 ["Risk", "Controls (summary)", "Requirements", "Shells", "Evidence", "Vol."],
-                [0.17, 0.25, 0.24, 0.20, 0.08, 0.06],
+                [0.15, 0.20, 0.25, 0.26, 0.08, 0.06],
                 rows,
                 size="scriptsize",
             )
         )
 
-    def control_summary(self, controls: str, risk_id: str, *, sentences: int = 2) -> str:
-        """The first ``sentences`` sentences of a risk's controls, and where the full text is."""
+    def control_summary(self, controls: str, risk_id: str, *, limit: int = 200) -> str:
+        """The first sentences or clauses of a risk's controls, up to about ``limit`` characters,
+        and where the full text is."""
         text = " ".join(controls.split())
         if not text:
             return ""
-        parts = re.split(r"(?<=[.;])\s+(?=[A-Z(])", text)
-        summary = " ".join(parts[:sentences])
+        parts = re.split(r"(?<=[.;])\s+", text)
+        kept = [parts[0]]
+        for part in parts[1:]:
+            if len(" ".join(kept + [part])) > limit:
+                break
+            kept.append(part)
+        summary = " ".join(kept)
         latex = self.report.process_text(summary)
-        if len(parts) > sentences:
+        if len(kept) < len(parts):
             where = self.report.process_text(self.risk_register_ref.split(",")[0]) if self.risk_register_ref else (
                 "the risk register")
             latex += f" \\textit{{(full text: {where}, {latex_escape(risk_id)})}}"
