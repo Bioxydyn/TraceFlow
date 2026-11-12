@@ -32,6 +32,8 @@ LATEX_TEXT_ESCAPES = {
     "}": r"\}",
     "~": r"\textasciitilde{}",
     "^": r"\textasciicircum{}",
+    # T1 sets a bare backtick as an opening quote: a backtick in a message is a backtick.
+    "`": r"\textasciigrave{}",
 }
 
 # Characters after which a long path, ID or code span may break across lines.

@@ -814,8 +814,26 @@ def read_file(file_path: str) -> str:
         return file.read()
 
 
+class _LiteralInlineParser(mistune.InlineParser):
+    r"""Inline Markdown that cannot eat the characters of a file name, key or path.
+
+    ``_`` never starts emphasis (``_act with _ref`` once printed as italics and lost its
+    underscores; ``'._'`` lost its ``_``): emphasis is ``*`` only. A backslash escapes only a
+    character Markdown gives a meaning to, so ``\-``, ``\.``, ``\d`` or ``C:\Users\.x``
+    keep their backslash.
+    """
+
+    RULE_NAMES = tuple(name for name in mistune.InlineParser.RULE_NAMES if name != "underscore_emphasis")
+    ESCAPE = r"""\\[\\`*_<>\[\]()#|!~'"]"""
+
+
 def parse_markdown(content: str) -> list[dict]:
-    parser = mistune.create_markdown(renderer=mistune.AstRenderer(), plugins=['table', 'strikethrough'])
+    renderer = mistune.AstRenderer()
+    parser = mistune.Markdown(
+        renderer,
+        inline=_LiteralInlineParser(renderer),
+        plugins=[mistune.PLUGINS["table"], mistune.PLUGINS["strikethrough"]],
+    )
     return parser(content)
 
 

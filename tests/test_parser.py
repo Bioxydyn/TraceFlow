@@ -138,3 +138,15 @@ def test_risk_reference_validation(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="Risk `RISK-404` references requirement `REQ-999`"):
         process_directory(str(tmp_path), version="0.1.0")
+
+
+def test_underscores_and_backslashes_are_literal() -> None:
+    """``_`` never starts emphasis, and a backslash escapes only Markdown's own characters."""
+    from traceflow.parser import parse_markdown
+
+    paragraph = parse_markdown(
+        "_act with _ref, keeps its '._' name, \\_KEY \\*x, C:\\Users\\.cfg \\d *emph*\n"
+    )[0]["children"]
+    text = "".join(child.get("text", "") for child in paragraph if child["type"] == "text")
+    assert "_act with _ref, keeps its '._' name, _KEY *x, C:\\Users\\.cfg \\d " == text
+    assert [child["type"] for child in paragraph if child["type"] != "text"] == ["emphasis"]

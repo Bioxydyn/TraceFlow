@@ -420,3 +420,15 @@ class TestPdfGenerator(unittest.TestCase):
             ]
         )
         self.assertIn("[Caption missing]", latex)
+
+
+def test_quotes_and_backticks_print_as_written() -> None:
+    """A quotation opens with a left quote; an apostrophe stays; a stray backtick is a backtick."""
+    from traceflow.pdf_generator import PdfReport
+
+    latex = PdfReport.process_text_impl("'Successfully Uploaded' don't (\"x\") `c_d`", set())
+    assert latex.startswith(
+        "\\textquoteleft{}Successfully Uploaded' don't (\\textquotedblleft{}x\\textquotedblright{})"
+    )
+    assert "\\texttt{c\\_" in latex
+    assert PdfReport.process_text_impl("a`b", set()) == "a\\textasciigrave{}b"

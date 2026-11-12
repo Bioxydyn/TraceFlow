@@ -22,6 +22,10 @@
 \usepackage{titlesec}
 \usepackage{enumitem}
 \usepackage{needspace}
+\usepackage{multicol}
+% A capture with no resolution of its own (a browser screenshot) prints at 150 pixels per inch,
+% at most the text width: small crops are not blown up, and 13 px text prints at about 6 pt.
+\ifdefined\pdfimageresolution\pdfimageresolution=150\fi
 \BLOCK{ if record_layout }
 % Evidence-record console output: breaks anywhere, even inside one long token.
 \usepackage{fvextra}
@@ -296,6 +300,10 @@
 \normalsize
 \setlength{\baselineskip}{14pt}
 \noindent \textbf{Validation pack result approved by:}
+\BLOCK{ if cover_signature_meaning }
+
+\noindent{\small Meaning of this signature: \VAR{cover_signature_meaning}\par}
+\BLOCK{ endif }
 
 \noindent \rule{6cm}{0.4pt} \\
 \noindent Signature
@@ -325,5 +333,9 @@
 \BLOCK{ endif }
 \BLOCK{ if include_toc }
 \tableofcontents
+\BLOCK{ if toc_newpage }
 \newpage
+\BLOCK{ else }
+\bigskip
+\BLOCK{ endif }
 \BLOCK{ endif }

@@ -35,6 +35,7 @@ from traceflow.evidence_render import (
     latex_escape,
     listing_ascii,
     parse_aux_pages,
+    status_colour,
     status_label,
     undefined_references,
     write_evidence_index,
@@ -225,6 +226,7 @@ class PdfReport():
         # loses its hyperref — extremely rare in practice and preferable to a
         # brace-mismatch crash inside pdflatex.
         text = text.replace("{", r"\{").replace("}", r"\}")
+        text = PdfReport._typographic_quotes(text)
 
         # Replace any instances of a unique ID within the text to a link to the ID.
         # 1. Explode text into words
@@ -275,12 +277,33 @@ class PdfReport():
         )
 
         new_text = new_text.replace("\x01", r"\textbackslash{}").replace(_URL_BREAK, r"\allowbreak{}")
+        new_text = (
+            new_text.replace("\x06", r"\textasciigrave{}").replace("\x07", r"\textquoteleft{}")
+            .replace("\x0e", r"\textquotedblleft{}").replace("\x0f", r"\textquotedblright{}")
+        )
 
         # 5. Put the code spans back.
         return _CODE_SPAN_PLACEHOLDER.sub(
             lambda match: PdfReport.code_span_latex(code_spans[int(match.group(1))], unique_ids),
             new_text,
         )
+
+    # A straight quote that opens a quotation: at the start, or after a space or an opening bracket.
+    _OPENING_SINGLE = re.compile(r"(^|[\s(\[])'(?=[^\s'])")
+    _OPENING_DOUBLE = re.compile(r'(^|[\s(\[])"(?=[^\s"])')
+
+    @staticmethod
+    def _typographic_quotes(text: str) -> str:
+        r"""Paired straight quotes as typeset quotes: ``'x'`` -> \textquoteleft x', ``"x"`` -> “x”.
+
+        Only a quote that opens a quotation changes; an apostrophe (``don't``) and a closing
+        quote print as the right quote they already are. A backtick left in the prose (code
+        spans are already set aside) prints as a backtick, not as an opening quote.
+        """
+        text = text.replace("`", "\x06")
+        text = PdfReport._OPENING_SINGLE.sub(lambda m: m.group(1) + "\x07", text)
+        text = PdfReport._OPENING_DOUBLE.sub(lambda m: m.group(1) + "\x0e", text)
+        return text.replace('"', "\x0f")
 
     @staticmethod
     def code_span_latex(text: str, unique_ids: set[str]) -> str:
@@ -1236,6 +1259,8 @@ class PdfReport():
         self._current_shell_id: Optional[str] = None
         self._missing_index_ids: list[str] = []
         self._reference_rows_in_shell = 0
+        # Requirement IDs that limit a reference row's captions (``render_reference_rows``).
+        self._caption_scope: Optional[set[str]] = None
         self._warned_ids: set[str] = set()
         self._scope_cache: dict[str, set[str]] = {}
         self._tests_by_id = self.document.tests_by_id()
@@ -1332,7 +1357,7 @@ class PdfReport():
 
     def _captions_for_shell(self, record: EvidenceRecord, shell_id: Optional[str]) -> list[str]:
         """Assertion captions that concern the shell's requirements (or name no requirement)."""
-        scope = self._shell_requirement_scope(shell_id)
+        scope = self._caption_scope if self._caption_scope is not None else self._shell_requirement_scope(shell_id)
         captions: list[str] = []
         for assertion in record.assertions:
             if not assertion.requirement_ids or not scope or scope & set(assertion.requirement_ids):
@@ -1595,18 +1620,36 @@ class PdfReport():
         lines.append("\\end{itemize}}")
         return "\n".join(lines) + "\n"
 
+    # Runner chatter that supports no assertion: the pipeline test runner's progress lines and the
+    # worker's bidding log. Dropped from an Output block, which then says how many it dropped.
+    OUTPUT_NOISE = (
+        re.compile(r"^\s*Running: \S+"),
+        re.compile(r"^\s*root ID: "),
+        re.compile(r"^\s*Experiment: "),
+        re.compile(r"^\s*Created document with id: "),
+        re.compile(r"^\s*Listed a total of \d+ chunks?\b"),
+        re.compile(r"Refusing to bid: job requires specific host"),
+    )
+
     def _evidence_output(self, record: EvidenceRecord) -> str:
         output = record.output
         if output.is_empty:
             return ""
-        lines = list(output.lines)
+        kept = [line for line in output.lines if not any(p.search(line) for p in self.OUTPUT_NOISE)]
+        dropped = len(output.lines) - len(kept)
+        lines = kept
         while lines and not lines[-1].strip():
             lines.pop()
+        while lines and not lines[0].strip():
+            lines.pop(0)
+        if not lines:
+            return ""
         shown = len(lines)
         if output.truncated and output.total_lines:
-            note = f"(last {shown} of {output.total_lines} lines)"
+            note = f"(last {shown} of {output.total_lines} lines"
         else:
-            note = f"({shown} line{'s' if shown != 1 else ''})"
+            note = f"({shown} line{'s' if shown != 1 else ''}"
+        note += f"; {dropped} runner log line{'s' if dropped != 1 else ''} not shown)" if dropped else ")"
         body = "\n".join(listing_ascii(line).replace("\\end{Verbatim}", "\\end {Verbatim}") for line in lines)
         return (
             self._evidence_subheading("Output", note)
@@ -1754,15 +1797,31 @@ class PdfReport():
     # ---------------------------------------------------------------- reference rows
 
     _REFERENCE_COLUMNS = (
-        "@{}>{\\raggedright\\arraybackslash}p{0.31\\linewidth}"
-        ">{\\raggedright\\arraybackslash}p{1.3cm}"
-        ">{\\raggedright\\arraybackslash}p{1.35cm}"
+        "@{}>{\\raggedright\\arraybackslash}p{0.29\\linewidth}"
+        ">{\\raggedright\\arraybackslash}p{1.05cm}"
         ">{\\raggedright\\arraybackslash}X"
-        ">{\\raggedleft\\arraybackslash}p{2.9cm}@{}"
+        ">{\\raggedleft\\arraybackslash}p{1.55cm}@{}"
     )
 
+    def render_reference_rows(self, evidence_ids: list[str], *, scope: Optional[set[str]] = None) -> str:
+        """Reference rows (with their header) for ``evidence_ids``, captions limited to ``scope``."""
+        saved = (self._reference_rows_in_shell, self._caption_scope)
+        self._reference_rows_in_shell = 0
+        self._caption_scope = scope
+        try:
+            return "".join(self._render_evidence_reference(evidence_id) for evidence_id in evidence_ids)
+        finally:
+            self._reference_rows_in_shell, self._caption_scope = saved
+
+    def _short_volume(self, volume_code: str) -> str:
+        """``BXD-VF-019-E03`` -> ``E03`` when the report code prefixes it."""
+        prefix = (self._report_plan.manifest.report_code + "-") if self._report_plan is not None else ""
+        if prefix and volume_code.startswith(prefix) and len(volume_code) > len(prefix):
+            return volume_code[len(prefix):]
+        return volume_code
+
     def _render_evidence_reference(self, evidence_id: str) -> str:
-        """``ID | status | kind | assertion captions | <volume> p.<page>`` from the evidence index."""
+        """``ID | status | assertion captions | <volume> p.<page>`` from the evidence index."""
         entry = self.evidence_index.get(evidence_id)
         if entry is None:
             if evidence_id not in self._missing_index_ids:
@@ -1787,15 +1846,16 @@ class PdfReport():
                 if assertion.caption.strip()
             ]
         caption_cell = "\\newline ".join("\\textbullet~" + caption for caption in captions)
-        where = f"\\mbox{{{latex_escape(str(entry['volume']))}}} \\mbox{{p.~{latex_escape(str(entry['page']))}}}"
+        volume = self._short_volume(str(entry["volume"]))
+        where = f"\\mbox{{{latex_escape(volume)} p.~{latex_escape(str(entry['page']))}}}"
         lines = [
-            "\\par\\noindent{\\footnotesize\\setlength{\\tabcolsep}{3pt}\\renewcommand{\\arraystretch}{1.1}%",
+            "\\par\\noindent{\\footnotesize\\setlength{\\tabcolsep}{3pt}\\renewcommand{\\arraystretch}{1.05}%",
             f"\\begin{{tabularx}}{{\\linewidth}}{{{self._REFERENCE_COLUMNS}}}",
         ]
         if self._reference_rows_in_shell == 0:
             lines += [
                 "\\toprule",
-                "\\textbf{Evidence} & \\textbf{Status} & \\textbf{Kind} & \\textbf{Asserted} & \\textbf{Record} \\\\",
+                "\\textbf{Evidence} & \\textbf{Status} & \\textbf{Asserted} & \\textbf{Record} \\\\",
                 "\\midrule",
             ]
         else:
@@ -1804,8 +1864,7 @@ class PdfReport():
             " & ".join(
                 [
                     self._evidence_id_text(evidence_id),
-                    coloured_status(record.status),
-                    latex_escape(status_label(record.kind)) if record.kind else "",
+                    self._short_status(record.status),
                     caption_cell,
                     where,
                 ]
@@ -1816,20 +1875,62 @@ class PdfReport():
         self._reference_rows_in_shell += 1
         return "\n".join(lines) + "\n"
 
+    @staticmethod
+    def _short_status(status: str) -> str:
+        """``Pass`` for a passed record (a narrow column); any other status in full."""
+        if status.strip().lower() in {"passed", "pass", "success", "succeeded"}:
+            return "\\textbf{\\textcolor{" + status_colour(status) + "}{Pass}}"
+        return coloured_status(status)
+
     def _form_field_name(self) -> str:
         """A form-field name unique in the PDF and the same in every build of the same input."""
         self._form_fields += 1
         seed = f"{self.document.name}|{self.document.version}|{self._form_fields}"
         return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:10].upper()
 
-    def _render_shell(self, test: "Test", *, command: str = "subsection") -> str:
-        """A test shell: its heading (with the shell's label) and its content."""
-        heading = "\\" + command + "{" + self.heading_text(test.test_id + ": " + test.title) + "}"
+    @staticmethod
+    def _is_requirement_id_line(item: dict) -> bool:
+        children = item.get("children") or []
+        return (
+            item.get("type") == "paragraph" and bool(children) and children[0].get("type") == "strong"
+            and (children[0].get("children") or [{}])[0].get("text") == "Requirement ID:"
+        )
+
+    def _shell_content(self, test: "Test", under: str) -> list[dict]:
+        """``test.content`` with its ``Requirement ID:`` lines folded into one ``Also verifies:`` line.
+
+        Under the requirement it verifies, a shell need not repeat it; the other requirements
+        it verifies are listed once. Without ``under`` the content is unchanged.
+        """
+        if not under:
+            return test.content
+        others = [req_id for req_id in test.req_ids if req_id != under]
+        content: list[dict] = []
+        inserted = False
+        for item in test.content:
+            if self._is_requirement_id_line(item):
+                if not inserted and others:
+                    content.append({"type": "raw_latex", "text": (
+                        "\\par{\\raggedright\\small\\noindent\\textbf{Also verifies:} "
+                        + ", ".join(self.process_text(req_id) for req_id in dict.fromkeys(others)) + "\\par}\n"
+                    )})
+                inserted = True
+                continue
+            content.append(item)
+        return content
+
+    def _render_shell(self, test: "Test", *, command: str = "subsection", under: str = "") -> str:
+        """A test shell: its heading (with the shell's label) and its content.
+
+        The heading asks for room for its first lines, so it never ends a page alone.
+        """
+        heading = "\\par\\needspace{7\\baselineskip}\\" + command + "{" + self.heading_text(
+            test.test_id + ": " + test.title) + "}"
         heading += "\\label{" + test.test_id + "}\n\n"
         self._current_shell_id = test.test_id
         self._reference_rows_in_shell = 0
         try:
-            body = self.render_test_content(test.content)
+            body = self.render_test_content(self._shell_content(test, under))
         finally:
             self._current_shell_id = None
         return heading + body + "\n\n"
@@ -1956,6 +2057,8 @@ class PdfReport():
         footer_left: Optional[str] = None,
         after_cover: str = "",
         cover_note: str = "",
+        toc_newpage: bool = True,
+        cover_signature_meaning: str = "",
     ) -> tuple[str, str, str]:
         """The rendered ``report-header.tex``, and the left and right logo file names.
 
@@ -1999,6 +2102,8 @@ class PdfReport():
         )
         tex_vars["after_cover"] = after_cover
         tex_vars["cover_note"] = cover_note
+        tex_vars["toc_newpage"] = toc_newpage
+        tex_vars["cover_signature_meaning"] = cover_signature_meaning
         top_left_logo_name = PdfReport._logo_basename(self.top_left_logo_path, "traceflow-logo.png")
         # An empty right-logo name suppresses the header's right slot entirely
         # (the template guards on it); otherwise it falls back to the bundled logo.
@@ -2296,6 +2401,9 @@ class PdfReport():
                 result_text=cover_result or "",
                 risk_register_ref=risk_register_ref or "",
             )
+            if hierarchy_mode and not cover_result and self.test_results_dir:
+                cover_result = structure_latex.computed_result()
+                structure_latex.result_text = cover_result
             after_cover = structure_latex.document_set_table(self.document.version) if document_set else ""
             cover_note = (
                 "Approval of this report covers it and every document listed, with its SHA-256, in the "
@@ -2323,6 +2431,12 @@ class PdfReport():
                 footer_left=footer,
                 after_cover=after_cover,
                 cover_note=cover_note,
+                # The hierarchy's "How to read" starts on the contents page.
+                toc_newpage=not hierarchy_mode,
+                cover_signature_meaning=(
+                    "approval of this report, its result and the documents of its document set."
+                    if document_set and include_cover_page else ""
+                ),
             )
 
             build_dir = work_dir or "report"

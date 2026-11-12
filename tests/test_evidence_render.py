@@ -483,8 +483,10 @@ def test_reference_mode_prints_one_row_per_binding(tmp_path: Path, fake_latex: _
     report.render(include_design=False, include_supplementary=False, evidence_mode="reference",
                   evidence_index=index, work_dir=str(tmp_path / "work"))
     tex = fake_latex.tex
-    assert "\\mbox{BXD-VF-019-E01} \\mbox{p.~3}" in tex
-    assert "\\textbf{Evidence} & \\textbf{Status} & \\textbf{Kind} & \\textbf{Asserted} & \\textbf{Record}" in tex
+    assert "\\mbox{BXD-VF-019-E01 p.~3}" in tex
+    # No Kind column (every record is a test); a passed record is a narrow "Pass".
+    assert "\\textbf{Evidence} & \\textbf{Status} & \\textbf{Asserted} & \\textbf{Record}" in tex
+    assert "\\textbf{Kind}" not in tex and "{Pass}}" in tex
     assert "\\textbullet~The PY-UPLOAD check passed" in tex
     # No figures, no output and no staging in the report.
     assert "\\includegraphics{autotest" not in tex and "adjustbox{max" not in tex

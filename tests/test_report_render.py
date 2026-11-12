@@ -105,13 +105,13 @@ def test_hierarchy_report_has_tier1_chapters_and_every_item_once(tmp_path: Path,
     assert "\\subsection*{Derived requirements}" in tex
     assert "\\subsection*{Tier 1 journey}" in tex
     audit = tex.split("\\label{REQ-VOX-AUDITLOG-001}")[1].split("\\label{TEST-VOX-AUDITLOG-001}")[0]
-    assert "\\textbf{Parent:} \\hyperref[REQ-VF-T1-002]" in audit
+    # One line: Verified by and Risks; no Parent (it is the chapter) and no Area line.
+    assert "\\textbf{Parent:}" not in audit and "Area: " not in audit
     assert "\\textbf{Verified by:} \\hyperref[TEST-VOX-AUDITLOG-001]" in audit
-    assert "\\textbf{Risks:} \\hyperref[RISK-VOX-001]" in audit
-    assert "Area: Families" in audit
+    assert "\\enspace\\textperiodcentered\\enspace \\textbf{Risks:} \\hyperref[RISK-VOX-001]" in audit
     # Shells under their requirement, a level lower, with reference rows.
     assert "\\subsubsection{\\texorpdfstring{\\mbox{\\hyperref[TEST-VOX-AUDITLOG-001]" in tex
-    assert "\\mbox{BXD-VF-019-E02} \\mbox{p.~" in tex
+    assert "\\mbox{E02 p.~" in tex
     # Order: journey shells come after the derived table and before the Tier 2 statements.
     t1 = tex.split("\\label{REQ-VF-T1-001}")[1].split("\\label{REQ-VF-T1-002}")[0]
     positions = [t1.index(marker) for marker in
@@ -131,12 +131,17 @@ def test_hierarchy_rollup_table_counts_evidence_and_volumes(tmp_path: Path, fake
     _render_hierarchy(tmp_path)
     tex = fake_latex.tex
     t1 = tex.split("\\label{REQ-VF-T1-002}")[1].split("\\label{REQ-VF-T1-003}")[0]
-    rollup = t1.split("Derived requirements")[2].split("\\end{longtable}")[0]
-    assert "\\textbf{Requirement} & \\textbf{Title} & \\textbf{Area} & \\textbf{Shells}" in rollup
-    assert "\\endhead" in rollup
+    rollup = t1.split("Derived requirements")[2].split("\\bottomrule\\end{tabular}")[0]
+    assert "\\textbf{Requirement} & \\textbf{Title} & \\textbf{Shells} & \\textbf{Evidence} & \\textbf{Risks}" in rollup
+    # One tabular per row, no longtable: a longtable just after a \needspace break printed its
+    # "(continued)" head above the chapter heading.
+    assert "\\begin{longtable}" not in rollup and "\\endhead" not in rollup
     # REQ-VOX-AUDITLOG-001 binds PY-AUDIT-CLAUSE and PW-SHARED-X, both passed, in volume E02.
-    row = next(line for line in rollup.splitlines() if line.startswith("\\hyperref[REQ-VOX-AUDITLOG-001]"))
-    assert "{\\textbf{2/2}}" in row and "\\mbox{E02}" in row and "\\hyperref[RISK-VOX-001]" in row
+    row = next(line for line in rollup.splitlines() if "\\hyperref[REQ-VOX-AUDITLOG-001]{\\textbf{REQ" in line)
+    assert "{\\textbf{2/2}}" in row and "\\hyperref[RISK-VOX-001]" in row
+    # The chapter's volume is said once; a row names a volume only when it is another one.
+    assert "\\mbox{E02}" not in row
+    assert "The full evidence records of this chapter are in \\mbox{E02} unless a row names another volume." in t1
     assert "2 derived requirements, 3 test shells and 3 evidence records, of which 3 passed." in t1
 
 
@@ -158,12 +163,13 @@ def test_hierarchy_front_matter_register_and_appendices(tmp_path: Path, fake_lat
     assert "\\leavevmode\\phantomsection\\label{RISK-VOX-001}" in trace
     assert "\\rowcolor{red!18}\\leavevmode\\phantomsection\\label{RISK-VOX-002}" in trace
     # Appendix A: areas with pages; Appendix B: every record with its volume and page.
-    areas = tex.split("\\section{Appendix A: Requirements by area}")[1].split("\\section{Appendix B")[0]
-    assert "\\pageref{REQ-VOX-UPLOAD-001}" in areas and "Source file: \\texttt{requirements/" in areas
+    areas = tex.split("\\section{Appendix A: Requirement index}")[1].split("\\section{Appendix B")[0]
+    assert "\\begin{multicols}{2}" in areas
+    assert "p.~\\pageref{REQ-VOX-UPLOAD-001}" in areas
     index = tex.split("\\section{Appendix B: Evidence index}")[1]
-    assert index.count("\\\\") >= 6
+    assert "\\begin{multicols}{2}" in index and index.count("\\hfill") >= 6
     # PY-UPLOAD links to the first shell printed that binds it: the Tier 1 journey shell.
-    assert "\\hyperref[TEST-VF-T1-001]{PY-\\allowbreak{}UPLOAD} &" in index and "& E01 & 3 \\\\" in index
+    assert "\\hyperref[TEST-VF-T1-001]{PY-\\allowbreak{}UPLOAD}" in index and "\\mbox{E01~p.~3}" in index
     footer = r"\\fancyfoot\[L\]\{\\footnotesize \\traceflowdocumentcode\{\} \| \S+ 2\.0 \(c4a3b477ecdb\) \| TraceFlow "
     assert re.search(footer, tex)
 
@@ -172,7 +178,7 @@ def test_hierarchy_inline_evidence_index_cites_pages_in_the_report(tmp_path: Pat
     _render_hierarchy(tmp_path, evidence_mode="inline", evidence_index=None)
     tex = fake_latex.tex
     index = tex.split("\\section{Appendix B: Evidence index}")[1]
-    assert "& this report & \\pageref{ev:PY-UPLOAD} \\\\" in index
+    assert "\\mbox{p.~\\pageref{ev:PY-UPLOAD}}" in index
     assert tex.count("\\label{ev:PY-UPLOAD}") == 1
 
 
@@ -228,7 +234,8 @@ def test_verified_by_replaces_the_run_on_test_id_lines(tmp_path: Path, fake_late
         "{\\raggedright\\noindent\\textbf{Verified by:} \\hyperref[TEST-VOX-UPLOAD-001]{\\textbf{TEST-\\allowbreak{}"
         in upload
     )
-    assert "(2 evidence records)\\par}" in upload
+    # Only the records that assert the requirement count: PW-SHARED-X asserts another one.
+    assert "(1 evidence record)\\par}" in upload
     # The default matrix is still the tick matrix.
     assert "\\diagbox" in tex
 
@@ -495,7 +502,7 @@ def test_readme_documents_the_structure_flags() -> None:
 def test_report_longtables_keep_space_from_the_paragraph_above(tmp_path: Path, fake_latex: _FakeLatex) -> None:
     _render_hierarchy(tmp_path)
     tables = fake_latex.tex.count("\\begin{longtable}")
-    assert tables > 3
+    assert tables >= 2
     spacing = "\\setlength{\\LTpre}{\\smallskipamount}\\setlength{\\LTpost}{\\smallskipamount}%"
     assert fake_latex.tex.count(spacing) == tables
 
@@ -516,7 +523,7 @@ def test_risk_trace_lists_volumes_in_manifest_order(tmp_path: Path, fake_latex: 
     )
     trace = fake_latex.tex.split("\\section{Risk trace}")[1].split("\\section{Appendix A")[0]
     row = next(line for line in trace.splitlines() if "\\label{RISK-VOX-001}" in line)
-    assert row.endswith("& \\mbox{E01}, \\mbox{E02} \\\\")
+    assert "& \\mbox{E01}, \\mbox{E02} \\\\" in row
 
 
 def test_how_to_read_matches_the_chapter_order_and_row_format(tmp_path: Path, fake_latex: _FakeLatex) -> None:
@@ -524,4 +531,4 @@ def test_how_to_read_matches_the_chapter_order_and_row_format(tmp_path: Path, fa
     how = fake_latex.tex.split("\\section{How to read this report}")[1].split("\\section{Release results}")[0]
     # Chapters follow the manifest's volumes, and the example cites a volume as the rows do.
     assert "a chapter, in the order of the evidence volumes, holding" in how
-    assert "(for example \\textit{\\mbox{BXD-VF-019-E01} p.~14})" in how
+    assert "(for example \\textit{\\mbox{E01} p.~14} (E01 is BXD-VF-019-E01))" in how

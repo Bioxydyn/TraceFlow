@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import copy
+import re
 from typing import TYPE_CHECKING, Optional
 
 from traceflow.evidence_render import breakable, coloured_status, evidence_anchor, latex_escape
@@ -67,6 +68,25 @@ def longtable(headers: list[str], fractions: list[float], rows: list[str], *, si
     return "\n".join(lines) + "\n"
 
 
+def row_tables(headers: list[str], fractions: list[float], rows: list[str], *, size: str = "footnotesize") -> str:
+    """A table set as one ``tabular`` per row, its header once: it breaks between rows like a
+    longtable, but it can follow a ``\\needspace`` page break (a longtable started just after
+    one printed its "(continued)" head above the chapter heading)."""
+    spec = "".join(_column(fraction) for fraction in fractions)
+    header = " & ".join(f"\\textbf{{{text}}}" for text in headers) + " \\\\"
+    lines = [
+        f"\\par\\smallskip{{\\{size}\\setlength{{\\tabcolsep}}{{3pt}}\\renewcommand{{\\arraystretch}}{{1.15}}"
+        "\\setlength{\\parskip}{0pt}%",
+        f"\\noindent\\begin{{tabular}}{{@{{}}{spec}@{{}}}}\\toprule {header} \\midrule\\end{{tabular}}"
+        "\\par\\nopagebreak",
+    ]
+    for position, row in enumerate(rows):
+        rule = "\\bottomrule" if position == len(rows) - 1 else ""
+        lines.append(f"\\noindent\\begin{{tabular}}{{@{{}}{spec}@{{}}}}{row}{rule}\\end{{tabular}}\\par")
+    lines.append("}\\smallskip\n")
+    return "\n".join(lines) + "\n"
+
+
 class StructureRenderer:
     """Builds the structure LaTeX for one render of ``report``."""
 
@@ -96,17 +116,17 @@ class StructureRenderer:
 
     # ------------------------------------------------------------------ small pieces
 
-    def id_link(self, item_id: str) -> str:
-        """A bold ID that may break after its hyphens; a link where the ID is in this PDF."""
-        text = f"\\textbf{{{breakable(item_id)}}}"
+    def id_link(self, item_id: str, *, whole: bool = False) -> str:
+        """A bold ID that may break after its hyphens (``whole``: never); a link where it is in this PDF."""
+        text = f"\\textbf{{{latex_escape(item_id) if whole else breakable(item_id)}}}"
         if item_id in self.report.unique_ids:
-            return f"\\hyperref[{item_id}]{{{text}}}"
-        return text
+            text = f"\\hyperref[{item_id}]{{{text}}}"
+        return f"\\mbox{{{text}}}" if whole else text
 
-    def id_list(self, item_ids: list[str], *, empty: str = "--", separator: str = ", ") -> str:
+    def id_list(self, item_ids: list[str], *, empty: str = "--", separator: str = ", ", whole: bool = False) -> str:
         if not item_ids:
             return empty
-        return separator.join(self.id_link(item_id) for item_id in item_ids)
+        return separator.join(self.id_link(item_id, whole=whole) for item_id in item_ids)
 
     def volume_text(self, volume_code: str) -> str:
         return latex_escape(short_volume_code(self.report_code, volume_code))
@@ -120,12 +140,45 @@ class StructureRenderer:
                     found.append(evidence_id)
         return found
 
-    def evidence_of_requirement(self, requirement: Requirement) -> list[str]:
-        return self.evidence_of_shells(requirement.test_ids)
+    def _scope_of(self, req_id: str) -> set[str]:
+        """``req_id`` and every requirement derived from it, at any depth."""
+        if not hasattr(self, "_children"):
+            self._children: dict[str, list[str]] = {}
+            for requirement in self.requirements.values():
+                for parent_id in requirement.parent_ids:
+                    self._children.setdefault(parent_id, []).append(requirement.req_id)
+        scope: set[str] = set()
+        stack = [req_id]
+        while stack:
+            current = stack.pop()
+            if current not in scope:
+                scope.add(current)
+                stack.extend(self._children.get(current, []))
+        return scope
 
-    def tally_cell(self, shell_ids: list[str]) -> str:
-        """``passed/total`` for the records the shells bind; ``N/A (...)`` when they bind none."""
-        evidence_ids = self.evidence_of_shells(shell_ids)
+    def record_asserts(self, evidence_id: str, req_id: str) -> bool:
+        """Whether the record asserts ``req_id`` (or a requirement derived from it).
+
+        A record whose assertions name no requirement at all counts for every requirement of
+        the shells that bind it, as before. Without result folders every bound record counts.
+        """
+        if not self.report.test_results_dir:
+            return True
+        named = set(self.report._load_record(evidence_id).requirement_ids)
+        return not named or bool(named & self._scope_of(req_id))
+
+    def evidence_of_requirement(self, requirement: Requirement) -> list[str]:
+        """The records of the requirement's shells that assert it (see ``record_asserts``)."""
+        return [
+            evidence_id
+            for evidence_id in self.evidence_of_shells(requirement.test_ids)
+            if self.record_asserts(evidence_id, requirement.req_id)
+        ]
+
+    def tally_cell(self, shell_ids: list[str], evidence_ids: Optional[list[str]] = None) -> str:
+        """``passed/total`` for ``evidence_ids`` (default: every record the shells bind)."""
+        if evidence_ids is None:
+            evidence_ids = self.evidence_of_shells(shell_ids)
         if not evidence_ids:
             if not shell_ids:
                 return "--"
@@ -142,13 +195,17 @@ class StructureRenderer:
         """TF-06: one ``Verified by:`` line, breakable and linked, with the record count."""
         if not requirement.test_ids and not always:
             return ""
+        return f"{{\\raggedright\\noindent{self.verified_by_text(requirement)}\\par}}\n"
+
+    def verified_by_text(self, requirement: Requirement) -> str:
+        """``Verified by: <shells> (<n> evidence records)``: the records that assert the requirement."""
         if not requirement.test_ids:
             shells = f"\\textcolor{{{_FAILED_COLOUR}}}{{\\textbf{{no test shell}}}}"
         else:
             shells = self.id_list(requirement.test_ids)
         count = len(self.evidence_of_requirement(requirement))
         suffix = f" ({count} evidence record{'s' if count != 1 else ''})" if count else ""
-        return f"{{\\raggedright\\noindent\\textbf{{Verified by:}} {shells}{suffix}\\par}}\n"
+        return f"\\textbf{{Verified by:}} {shells}{suffix}"
 
     def _volumes_of(self, req_ids: list[str]) -> dict[str, list[str]]:
         return requirement_volumes(
@@ -179,7 +236,7 @@ class StructureRenderer:
                         self.report.process_text(requirement.title),
                         self.id_list(requirement.parent_ids),
                         self.id_list(requirement.test_ids),
-                        self.tally_cell(requirement.test_ids),
+                        self.tally_cell(requirement.test_ids, self.evidence_of_requirement(requirement)),
                         self.id_list(requirement.risk_ids),
                     ],
                     highlight=not requirement.test_ids,
@@ -244,7 +301,8 @@ class StructureRenderer:
     def _section(self, title: str, label: str = "", *, new_page: bool = True) -> str:
         text = self.report.heading_text(title)
         label_text = f"\\label{{{label}}}" if label else ""
-        return ("\\clearpage\n" if new_page else "") + f"\\section{{{text}}}{label_text}\n"
+        # A new section starts on the same page when a third of a page is left (no near-empty pages).
+        return ("\\needspace{0.35\\textheight}\n" if new_page else "") + f"\\section{{{text}}}{label_text}\n"
 
     def front_matter(self, version: str) -> str:
         assert self.layout is not None
@@ -261,32 +319,43 @@ class StructureRenderer:
             "This report is laid out by the requirement hierarchy. Each Tier 1 requirement has a chapter, in "
             f"{order}, holding:\n",
             "\\begin{itemize}",
-            "\\item the Tier 1 statement, with its source in the Intended Use Statement where one is given;",
-            "\\item a table of the requirements derived from it: area, test shells, evidence passed out of "
-            "bound, risks and evidence volume;",
+            "\\item the Tier 1 statement"
+            + (", with its source in the Intended Use Statement" if any(c.ius_source for c in self.layout.chapters)
+               else "")
+            + ", and the risks of the requirements derived from it;",
+            "\\item a table of the requirements derived from it: test shells, evidence passed out of the "
+            "records that assert the requirement, and risks; a requirement whose records are in another "
+            "volume names it;",
             "\\item the Tier 1 journey test shells, which exercise the Tier 1 end to end;",
-            "\\item each derived requirement, with its \\textbf{Parent}, \\textbf{Verified by} and "
-            "\\textbf{Risks} lines, followed by the test shells that verify it: description, steps and "
-            "expected result, then the evidence each shell binds.",
+            "\\item each derived requirement, with one line giving the shells that verify it, the number of "
+            "evidence records that assert it and its risks, followed by its test shells: the description, "
+            "then the evidence each shell binds. A shell that also verifies other requirements says so "
+            "(\\textbf{Also verifies}); a shell printed under another requirement is cited with its page, "
+            "with the rows of the records that assert this one.",
             "\\end{itemize}",
         ]
         if reference:
             # The example cites a volume the way the rows do: its full code.
             volumes = sorted({str(entry.get("volume", "")) for entry in self.report.evidence_index.values()} - {""})
-            example = f"\\mbox{{{latex_escape(volumes[0])}}} p.~14" if volumes else "E03 p.~14"
+            example = f"\\mbox{{{self.volume_text(volumes[0])}}} p.~14" if volumes else "E03 p.~14"
+            short_for = (
+                f" ({self.volume_text(volumes[0])} is {latex_escape(volumes[0])})"
+                if volumes and self.volume_text(volumes[0]) != latex_escape(volumes[0]) else ""
+            )
             parts.append(
-                "Each bound evidence record is one row: its ID, status, kind, what it asserted for that shell's "
-                "requirements, and where the full record is printed, as an evidence-volume code and page "
-                f"(for example \\textit{{{example}}}). The volumes print each record once: provenance, "
-                "description, assertions, output and figures. A record bound by several shells is a row under "
-                "each.\n"
+                "Each bound evidence record is one row: its ID, status, what it asserted for that shell's "
+                "requirements, and where the full record is printed, as the short code of its evidence volume "
+                f"and a page (for example \\textit{{{example}}}{short_for}). "
+                "The volumes print each record once: provenance, description, assertions, output and figures. "
+                "A record bound by several shells is a row under each.\n"
             )
         else:
             parts.append("Each bound evidence record is printed in full under the shell that binds it.\n")
         parts.append(
             "Requirement, test and risk IDs are links within this report. After the Tier 1 chapters come the "
-            "requirements met by procedure (if any), the risk trace table and two appendices: the requirements "
-            "by area (source file) and an index of every evidence record.\n"
+            "requirements met by procedure (if any), the risk trace table and two appendices: an index of "
+            "every requirement with the page of its statement, followed by the introductions of the "
+            "requirement and test files, and an index of every evidence record.\n"
         )
         if self.document_set is not None:
             parts.append(
@@ -337,9 +406,53 @@ class StructureRenderer:
             + "\n".join(f"{label} & {value} \\\\" for label, value in rows)
             + "\n\\bottomrule\\end{tabular}\\end{center}\n"
         )
+        if known and evidence_ids and passed < len(evidence_ids):
+            parts.append(self.not_passed_table(evidence_ids))
         parts.append(self.volume_counts(evidence_ids))
         parts.append(self.ci_register(evidence_ids))
         return "\n".join(part for part in parts if part)
+
+    def computed_result(self) -> str:
+        """The cover's Result, from the bound records: all passed, or how many did not."""
+        assert self.layout is not None
+        evidence_ids = self._bound_records()
+        statuses = [self.report.evidence_status(evidence_id) for evidence_id in evidence_ids]
+        if not evidence_ids or not all(statuses):
+            return ""
+        failed = sum(1 for status in statuses if status.strip().lower() not in _PASSED)
+        if failed:
+            return f"NOT RELEASABLE: {failed} of {len(evidence_ids)} evidence records did not pass"
+        return f"All {len(evidence_ids)} evidence records passed"
+
+    def not_passed_table(self, evidence_ids: list[str]) -> str:
+        """Every bound record that did not pass: its status, the shells and requirements, and where."""
+        assert self.layout is not None
+        shells_of: dict[str, list[str]] = {}
+        for shell_id in self.layout.shell_ids():
+            for evidence_id in self.tests[shell_id].evidence_ids:
+                shells_of.setdefault(evidence_id, []).append(shell_id)
+        rows: list[str] = []
+        for evidence_id in evidence_ids:
+            status = self.report.evidence_status(evidence_id)
+            if status.strip().lower() in _PASSED:
+                continue
+            shells = shells_of.get(evidence_id, [])
+            requirement_ids: list[str] = []
+            for shell_id in shells:
+                for req_id in self.tests[shell_id].req_ids:
+                    if req_id not in requirement_ids:
+                        requirement_ids.append(req_id)
+            rows.append(self._row([
+                f"\\textbf{{{breakable(evidence_id)}}}",
+                coloured_status(status),
+                self.id_list(requirement_ids),
+                ", ".join(f"\\pageref{{{shell_id}}}" for shell_id in shells[:3]) or "--",
+            ]))
+        return (
+            "\\subsection{Records not passed}\n"
+            + longtable(["Evidence record", "Status", "Requirements", "Report page"], [0.34, 0.14, 0.38, 0.14], rows,
+                        aligns=["raggedright", "raggedright", "raggedright", "raggedleft"])
+        )
 
     def volume_counts(self, evidence_ids: list[str]) -> str:
         index = self.report.evidence_index
@@ -462,65 +575,124 @@ class StructureRenderer:
 
     # ------------------------------------------------------------------ hierarchy: chapters
 
-    def _shell(self, test: Test, command: str) -> str:
-        return self.report._render_shell(test, command=command)
+    def _shell(self, test: Test, command: str, *, under: str = "") -> str:
+        return self.report._render_shell(test, command=command, under=under)
 
-    def _requirement_lines(self, requirement: Requirement, *, parent: bool) -> str:
-        lines = ["{\\raggedright\\small"]
-        if parent:
-            lines.append(f"\\noindent\\textbf{{Parent:}} {self.id_list(requirement.parent_ids, empty='none')}\\par")
-        lines.append(self.verified_by_line(requirement, always=True).strip())
+    def _requirement_lines(self, requirement: Requirement, *, chapter_id: str = "",
+                           rolled_up: Optional[list[str]] = None) -> str:
+        """One line: ``Verified by: ... · Risks: ...``.
+
+        ``Parent`` is printed only when it is not the chapter the requirement sits in.
+        ``rolled_up``: a Tier 1's risks, gathered from the requirements derived from it.
+        """
+        pieces: list[str] = []
+        parents = [parent_id for parent_id in requirement.parent_ids if parent_id != chapter_id]
+        if parents or (requirement.parent_ids and not chapter_id):
+            pieces.append(f"\\textbf{{Parent:}} {self.id_list(requirement.parent_ids)}")
+        pieces.append(self.verified_by_text(requirement))
         if self.document.risks:
-            risks = self.id_list(requirement.risk_ids, empty="none recorded")
-            lines.append(f"\\noindent\\textbf{{Risks:}} {risks}\\par")
-        lines.append("}")
-        return "\n".join(lines) + "\n"
+            risk_ids = list(requirement.risk_ids)
+            label = "Risks"
+            if rolled_up is not None:
+                for risk_id in rolled_up:
+                    if risk_id not in risk_ids:
+                        risk_ids.append(risk_id)
+                label = "Risks (of its derived requirements)" if rolled_up and not requirement.risk_ids else "Risks"
+            pieces.append(f"\\textbf{{{label}:}} {self.id_list(risk_ids, empty='none recorded')}")
+        return "{\\raggedright\\small\\noindent " + "\\enspace\\textperiodcentered\\enspace ".join(pieces) + "\\par}\n"
 
-    def requirement_section(self, section: RequirementSection) -> str:
+    def _printed_under(self) -> dict[str, str]:
+        """Shell ID -> the requirement (or Tier 1, for a journey shell) it is printed under."""
+        if not hasattr(self, "_under"):
+            self._under: dict[str, str] = {}
+            if self.layout is not None:
+                for chapter in self.layout.chapters:
+                    for test in chapter.journey_shells:
+                        self._under.setdefault(test.test_id, chapter.tier1.req_id)
+                for section in self.layout.all_sections():
+                    for test in section.shells:
+                        self._under.setdefault(test.test_id, section.requirement.req_id)
+        return self._under
+
+    def _shell_elsewhere(self, requirement: Requirement, shell_id: str) -> str:
+        """A shell of ``requirement`` printed under another: its page and the rows that assert this one."""
+        under = self._printed_under().get(shell_id)
+        test = self.tests.get(shell_id)
+        if under is None or test is None:
+            return ""
+        where = (
+            f"printed under {self.id_link(under)}, p.~\\pageref{{{shell_id}}}" if under != shell_id
+            else f"p.~\\pageref{{{shell_id}}}"
+        )
+        evidence_ids = [e for e in test.evidence_ids if self.record_asserts(e, requirement.req_id)]
+        text = (
+            "\\par\\needspace{4\\baselineskip}\\smallskip{\\raggedright\\small\\noindent"
+            f"\\textbf{{{latex_escape(shell_id)}}}: {self.report.process_text(test.title)} ({where})"
+        )
+        if not evidence_ids:
+            return text + ".\\par}\n"
+        text += f". The records that assert {latex_escape(requirement.req_id)}:\\par}}\n"
+        return text + self.report.render_reference_rows(evidence_ids, scope={requirement.req_id})
+
+    def requirement_section(self, section: RequirementSection, chapter_id: str = "") -> str:
         requirement = section.requirement
         heading = self.report.heading_text(f"{requirement.req_id}: {requirement.title}")
         parts = [
-            # Keep the heading with its Area/Parent/Verified by/Risks lines.
-            f"\\needspace{{4\\baselineskip}}\\subsection{{{heading}}}\\label{{{requirement.req_id}}}\n",
-            f"{{\\footnotesize\\color{{black!70}}Area: {self.report.process_text(section.area)}\\par}}\n",
-            self._requirement_lines(requirement, parent=True),
+            # Keep the heading with its line and the start of its statement.
+            f"\\needspace{{5\\baselineskip}}\\subsection{{{heading}}}\\label{{{requirement.req_id}}}\n",
+            self._requirement_lines(requirement, chapter_id=chapter_id),
             self.report.md_to_latex(requirement.body_content()),
             "\n",
         ]
+        printed = {test.test_id for test in section.shells}
         for test in section.shells:
-            parts.append(self._shell(test, "subsubsection"))
+            parts.append(self._shell(test, "subsubsection", under=requirement.req_id))
+        if self.report.evidence_mode == "reference":
+            for shell_id in requirement.test_ids:
+                if shell_id not in printed:
+                    parts.append(self._shell_elsewhere(requirement, shell_id))
         return "".join(parts)
 
     def rollup_table(self, chapter: Tier1Chapter) -> str:
         assert self.layout is not None
         volumes = self._volumes_of([requirement.req_id for requirement in chapter.derived])
+        home = self.chapter_volume(chapter)
         rows: list[str] = []
         for requirement in chapter.derived:
             title = self.report.process_text(requirement.title)
             if self.layout.tier1_of.get(requirement.req_id, [chapter.tier1.req_id])[0] != chapter.tier1.req_id:
                 title += " \\textit{(printed under " + self.id_link(self.layout.tier1_of[requirement.req_id][0]) + ")}"
+            elsewhere = [code for code in volumes.get(requirement.req_id, []) if code != home]
+            if elsewhere:
+                title += " \\textit{(records in " + self._volume_cell(volumes[requirement.req_id]) + ")}"
             rows.append(
                 self._row(
                     [
                         self.id_link(requirement.req_id),
                         title,
-                        self.report.process_text(self.layout.areas.get(requirement.req_id, "")),
                         self.id_list(requirement.test_ids),
-                        self.tally_cell(requirement.test_ids),
+                        self.tally_cell(requirement.test_ids, self.evidence_of_requirement(requirement)),
                         self.id_list(requirement.risk_ids),
-                        self._volume_cell(volumes.get(requirement.req_id, [])),
                     ],
                     highlight=not requirement.test_ids,
                 )
             )
         if not rows:
             return "No requirement is derived from this Tier 1.\n\n"
-        return longtable(
-            ["Requirement", "Title", "Area", "Shells", "Evidence", "Risks", "Vol."],
-            [0.22, 0.18, 0.10, 0.25, 0.08, 0.11, 0.06],
+        return row_tables(
+            ["Requirement", "Title", "Shells", "Evidence", "Risks"],
+            [0.27, 0.32, 0.22, 0.08, 0.11],
             rows,
-            size="scriptsize",
         )
+
+    def chapter_volume(self, chapter: Tier1Chapter) -> str:
+        """The evidence volume of a Tier 1 chapter (from the manifest), or ``""``."""
+        if self.plan is None:
+            return ""
+        for spec in self.plan.manifest.volumes:
+            if chapter.tier1.req_id in spec.tier1_ids:
+                return spec.code
+        return ""
 
     def _chapter_summary(self, chapter: Tier1Chapter) -> str:
         shells: list[str] = []
@@ -550,7 +722,7 @@ class StructureRenderer:
         tier1 = chapter.tier1
         heading = self.report.heading_text(f"{tier1.req_id}: {tier1.title}")
         parts = [
-            f"\\clearpage\n\\section{{{heading}}}\\label{{{tier1.req_id}}}\n",
+            f"\\needspace{{0.35\\textheight}}\n\\section{{{heading}}}\\label{{{tier1.req_id}}}\n",
             self.report.md_to_latex(chapter.statement),
             "\n\n",
         ]
@@ -559,18 +731,29 @@ class StructureRenderer:
                 f"{{\\raggedright\\small\\noindent\\textbf{{IUS Source:}} "
                 f"{self.report.process_text(chapter.ius_source)}\\par}}\n"
             )
-        parts.append(self._requirement_lines(tier1, parent=False))
+        rolled: list[str] = []
+        for requirement in chapter.derived:
+            for risk_id in requirement.risk_ids:
+                if risk_id not in rolled:
+                    rolled.append(risk_id)
+        parts.append(self._requirement_lines(tier1, rolled_up=rolled))
         parts.append("\\subsection*{Derived requirements}\\phantomsection"
                      "\\addcontentsline{toc}{subsection}{Derived requirements}\n")
         parts.append(self._chapter_summary(chapter))
+        home = self.chapter_volume(chapter)
+        if home and self.report.evidence_mode == "reference":
+            parts.append(
+                f"The full evidence records of this chapter are in \\mbox{{{self.volume_text(home)}}} unless "
+                "a row names another volume.\n\n"
+            )
         parts.append(self.rollup_table(chapter))
         if chapter.journey_shells:
             parts.append("\n\\subsection*{Tier 1 journey}\\phantomsection"
                          "\\addcontentsline{toc}{subsection}{Tier 1 journey}\n")
             for test in chapter.journey_shells:
-                parts.append(self._shell(test, "subsubsection"))
+                parts.append(self._shell(test, "subsubsection", under=tier1.req_id))
         for section in chapter.sections:
-            parts.append(self.requirement_section(section))
+            parts.append(self.requirement_section(section, chapter_id=tier1.req_id))
         return "".join(parts)
 
     def chapters(self) -> str:
@@ -627,7 +810,7 @@ class StructureRenderer:
                     if code and code not in volumes:
                         volumes.append(code)
                 volumes.sort()
-            controls = risk.attributes.get("controls", "")
+            controls = self.control_summary(risk.attributes.get("controls", ""), risk.risk_id)
             # \leavevmode: a label at the very start of a p-cell would push the text down a line.
             first = (
                 f"\\leavevmode\\phantomsection\\label{{{risk.risk_id}}}\\textbf{{{breakable(risk.risk_id)}}}: "
@@ -637,9 +820,9 @@ class StructureRenderer:
                 self._row(
                     [
                         first,
-                        self.report.process_text(controls) if controls else "--",
-                        self.id_list(requirement_ids, separator="\\newline "),
-                        self.id_list(shells, separator="\\newline "),
+                        controls or "--",
+                        self.id_list(requirement_ids, separator="\\newline ", whole=True),
+                        self.id_list(shells, separator="\\newline ", whole=True),
                         self.tally_cell(shells) if shells else "--",
                         self._volume_cell(volumes),
                     ],
@@ -657,13 +840,27 @@ class StructureRenderer:
             + "Each risk, its controls, the requirements and test shells that verify those controls, the status "
             "of the evidence those shells bind and the volumes that hold it. A risk with no test shell is a red "
             "row." + where + "\n\n"
-            + longtable(
-                ["Risk", "Controls", "Requirements", "Shells", "Evidence", "Vol."],
-                [0.16, 0.36, 0.17, 0.17, 0.08, 0.06],
+            + row_tables(
+                ["Risk", "Controls (summary)", "Requirements", "Shells", "Evidence", "Vol."],
+                [0.17, 0.25, 0.24, 0.20, 0.08, 0.06],
                 rows,
                 size="scriptsize",
             )
         )
+
+    def control_summary(self, controls: str, risk_id: str, *, sentences: int = 2) -> str:
+        """The first ``sentences`` sentences of a risk's controls, and where the full text is."""
+        text = " ".join(controls.split())
+        if not text:
+            return ""
+        parts = re.split(r"(?<=[.;])\s+(?=[A-Z(])", text)
+        summary = " ".join(parts[:sentences])
+        latex = self.report.process_text(summary)
+        if len(parts) > sentences:
+            where = self.report.process_text(self.risk_register_ref.split(",")[0]) if self.risk_register_ref else (
+                "the risk register")
+            latex += f" \\textit{{(full text: {where}, {latex_escape(risk_id)})}}"
+        return latex
 
     # ------------------------------------------------------------------ appendices
 
@@ -677,40 +874,48 @@ class StructureRenderer:
                 item["_unnumbered"] = True
         return demoted
 
+    @staticmethod
+    def _two_column_index(entries: list[str]) -> str:
+        """Index lines set in two balanced columns; each entry is one paragraph."""
+        if not entries:
+            return ""
+        return (
+            "{\\footnotesize\\setlength{\\columnsep}{1.2em}\\setlength{\\parskip}{0pt}"
+            "\\begin{multicols}{2}\\raggedright\n"
+            + "\n".join(entries)
+            + "\n\\end{multicols}\\par}\n"
+        )
+
+    @staticmethod
+    def _index_entry(left: str, right: str) -> str:
+        return f"\\noindent\\hangindent=1.5em {left}\\nobreak\\hfill\\nobreak {right}\\par"
+
     def area_appendix(self) -> str:
         assert self.layout is not None
-        parts = [
-            self._section("Appendix A: Requirements by area", "appendix-areas"),
-            "Every requirement file (area) of the corpus, with its introduction and its requirements, each "
-            "with the Tier 1 it traces to and the page of its statement. Clause-led readers (21 CFR Part 11, "
-            "EU GMP Annex 11) can start here.\n",
+        requirements = sorted(
+            (requirement for doc in self.document.requirements for requirement in doc.items),
+            key=lambda requirement: (requirement.req_id.casefold(), requirement.req_id),
+        )
+        entries = [
+            self._index_entry(self.id_link(requirement.req_id, whole=True),
+                              f"p.~\\pageref{{{requirement.req_id}}}")
+            for requirement in requirements
         ]
-        for doc in self.document.requirements:
-            parts.append(f"\\subsection{{{self.report.heading_text(doc.title)}}}\n")
-            if doc.source_path:
-                parts.append(f"{{\\footnotesize Source file: \\texttt{{{breakable(doc.source_path)}}}\\par}}\n")
-            if doc.generic_content:
+        parts = [
+            self._section("Appendix A: Requirement index", "appendix-areas"),
+            "Every requirement of the corpus, in ID order, with the page of its statement. The Tier 1 chapter "
+            "of each is the chapter that page is in. The introductions of the requirement and test files "
+            "follow the index.\n",
+            self._two_column_index(entries),
+        ]
+        with_prose = [doc for doc in self.document.requirements if doc.generic_content]
+        if with_prose:
+            parts.append("\\subsection{Requirement files}\n")
+            for doc in with_prose:
+                parts.append(f"\\subsubsection*{{{self.report.heading_text(doc.title)}}}\n")
+                if doc.source_path:
+                    parts.append(f"{{\\footnotesize Source file: \\texttt{{{breakable(doc.source_path)}}}\\par}}\n")
                 parts.append(self.report.md_to_latex(self._demoted(doc.generic_content)) + "\n\n")
-            rows = [
-                self._row(
-                    [
-                        self.id_link(requirement.req_id),
-                        self.report.process_text(requirement.title),
-                        self.id_list(self.layout.tier1_of.get(requirement.req_id, []), empty="--"),
-                        f"\\pageref{{{requirement.req_id}}}",
-                    ]
-                )
-                for requirement in doc.items
-            ]
-            if rows:
-                parts.append(
-                    longtable(
-                        ["Requirement", "Title", "Tier 1", "Page"],
-                        [0.30, 0.47, 0.15, 0.08],
-                        rows,
-                        aligns=["raggedright", "raggedright", "raggedright", "raggedleft"],
-                    )
-                )
         tests_with_prose = [doc for doc in self.document.tests if doc.generic_content]
         if tests_with_prose:
             parts.append("\\subsection{Test documents}\n")
@@ -737,34 +942,30 @@ class StructureRenderer:
         if not first_shell:
             return ""
         reference = self.report.evidence_mode == "reference"
-        rows: list[str] = []
+        entries: list[str] = []
         for evidence_id in sorted(first_shell, key=lambda value: (value.casefold(), value)):
             status = self.report.evidence_status(evidence_id)
             if reference:
                 entry = self.report.evidence_index.get(evidence_id, {})
                 volume = self.volume_text(str(entry.get("volume", "")))
-                page = latex_escape(str(entry.get("page", "")))
+                where = f"{volume}~p.~{latex_escape(str(entry.get('page', '')))}"
             else:
-                volume = "this report"
-                page = f"\\pageref{{{evidence_anchor(evidence_id)}}}"
-            rows.append(
-                self._row(
-                    [
-                        f"\\hyperref[{first_shell[evidence_id]}]{{{breakable(evidence_id)}}}",
-                        coloured_status(status) if status else "--",
-                        volume,
-                        page,
-                    ]
+                where = f"p.~\\pageref{{{evidence_anchor(evidence_id)}}}"
+            passed = status.strip().lower() in _PASSED
+            mark = (
+                f"\\textcolor{{{_PASSED_COLOUR}}}{{Pass}}" if passed
+                else (coloured_status(status) if status else "--")
+            )
+            entries.append(
+                self._index_entry(
+                    f"\\hyperref[{first_shell[evidence_id]}]{{{breakable(evidence_id)}}}",
+                    f"{mark}\\enspace\\mbox{{{where}}}",
                 )
             )
         return (
             self._section("Appendix B: Evidence index", "appendix-evidence-index")
-            + "Every evidence record bound in this report, by ID, with its status and the volume and page of the "
-            "full record. Each ID links to the first test shell in this report that binds it.\n\n"
-            + longtable(
-                ["Evidence record", "Status", "Volume", "Page"],
-                [0.66, 0.14, 0.12, 0.08],
-                rows,
-                aligns=["raggedright", "raggedright", "raggedright", "raggedleft"],
-            )
+            + "Every evidence record bound in this report, by ID, with its status (\\textit{Pass} for passed) and "
+            + ("the volume and page of the full record. " if reference else "the page of the full record. ")
+            + "Each ID links to the first test shell in this report that binds it.\n\n"
+            + self._two_column_index(entries)
         )
