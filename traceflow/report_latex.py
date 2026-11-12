@@ -882,11 +882,11 @@ class StructureRenderer:
 
     @staticmethod
     def _two_column_index(entries: list[str]) -> str:
-        """Index lines set in two balanced columns; each entry is one paragraph."""
+        """Index lines set in two balanced columns at 7 pt; each entry is one paragraph."""
         if not entries:
             return ""
         return (
-            "{\\footnotesize\\setlength{\\columnsep}{1.2em}\\setlength{\\parskip}{0pt}"
+            "{\\scriptsize\\setlength{\\columnsep}{1.2em}\\setlength{\\parskip}{0pt}"
             "\\begin{multicols}{2}\\raggedright\n"
             + "\n".join(entries)
             + "\n\\end{multicols}\\par}\n"
@@ -939,6 +939,10 @@ class StructureRenderer:
                     )
         return "".join(parts)
 
+    # A record ID that ends in a shell-style number (``PW-TEST-VOX-UPLOAD-019b``): its family is
+    # the part before that number, and the index lists the family once with each record's suffix.
+    _FAMILY_ID = re.compile(r"^(?P<family>.+-)(?P<suffix>\d{2,4}[A-Za-z]{0,3})$")
+
     def evidence_index_appendix(self) -> str:
         assert self.layout is not None
         first_shell: dict[str, str] = {}
@@ -948,30 +952,52 @@ class StructureRenderer:
         if not first_shell:
             return ""
         reference = self.report.evidence_mode == "reference"
-        entries: list[str] = []
-        for evidence_id in sorted(first_shell, key=lambda value: (value.casefold(), value)):
-            status = self.report.evidence_status(evidence_id)
+
+        def where(evidence_id: str) -> str:
             if reference:
                 entry = self.report.evidence_index.get(evidence_id, {})
                 volume = self.volume_text(str(entry.get("volume", "")))
-                where = f"{volume}~p.~{latex_escape(str(entry.get('page', '')))}"
+                return f"\\mbox{{{volume}~p.~{latex_escape(str(entry.get('page', '')))}}}"
+            return f"\\mbox{{p.~\\pageref{{{evidence_anchor(evidence_id)}}}}}"
+
+        def mark(evidence_id: str) -> str:
+            status = self.report.evidence_status(evidence_id)
+            if status.strip().lower() in _PASSED:
+                return ""
+            return (coloured_status(status) if status else "--") + ", "
+
+        families: dict[str, list[str]] = {}
+        singles: list[str] = []
+        for evidence_id in first_shell:
+            match = self._FAMILY_ID.match(evidence_id)
+            if match:
+                families.setdefault(match.group("family"), []).append(evidence_id)
             else:
-                where = f"p.~\\pageref{{{evidence_anchor(evidence_id)}}}"
-            passed = status.strip().lower() in _PASSED
-            mark = (
-                f"\\textcolor{{{_PASSED_COLOUR}}}{{Pass}}" if passed
-                else (coloured_status(status) if status else "--")
+                singles.append(evidence_id)
+        rows: list[tuple[str, str]] = []
+        for family, members in families.items():
+            if len(members) == 1:
+                singles.append(members[0])
+                continue
+            members.sort(key=lambda value: (value.casefold(), value))
+            items = ", ".join(
+                f"\\hyperref[{first_shell[evidence_id]}]{{{latex_escape(evidence_id[len(family):])}}}"
+                f"~({mark(evidence_id)}{where(evidence_id)})"
+                for evidence_id in members
             )
-            entries.append(
-                self._index_entry(
-                    f"\\hyperref[{first_shell[evidence_id]}]{{{breakable(evidence_id)}}}",
-                    f"{mark}\\enspace\\mbox{{{where}}}",
-                )
-            )
+            rows.append((family, f"\\noindent\\hangindent=1.5em \\textbf{{{breakable(family)}}}\\,: {items}\\par"))
+        for evidence_id in singles:
+            rows.append((evidence_id, self._index_entry(
+                f"\\hyperref[{first_shell[evidence_id]}]{{{breakable(evidence_id)}}}",
+                f"{mark(evidence_id)}{where(evidence_id)}",
+            )))
+        rows.sort(key=lambda row: (row[0].casefold(), row[0]))
         return (
             self._section("Appendix B: Evidence index", "appendix-evidence-index")
-            + "Every evidence record bound in this report, by ID, with its status (\\textit{Pass} for passed) and "
-            + ("the volume and page of the full record. " if reference else "the page of the full record. ")
+            + "Every evidence record bound in this report, by ID, with "
+            + ("the volume and page of the full record" if reference else "the page of the full record")
+            + " and, for a record that did not pass, its status. Records whose IDs differ only in their final "
+            + "number are listed once under the shared part of the ID, in bold, each by the rest of its ID. "
             + "Each ID links to the first test shell in this report that binds it.\n\n"
-            + self._two_column_index(entries)
+            + self._two_column_index([row for _key, row in rows])
         )

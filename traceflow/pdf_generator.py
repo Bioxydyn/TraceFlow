@@ -29,7 +29,9 @@ from traceflow.evidence_render import (
     LABEL_PREFIX,
     LATEX_TEXT_ESCAPES,
     breakable,
+    breakable_cell,
     breakable_code,
+    breakable_id,
     coloured_status,
     evidence_anchor,
     latex_escape,
@@ -66,7 +68,7 @@ from traceflow.version import __version__
 from traceflow.volumes import ManifestError
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from traceflow.volumes import VolumePlan, VolumeSpec
+    from traceflow.volumes import ReaderNote, VolumePlan, VolumeSpec
 
 _latex_jinja2_env = latex.jinja2.make_env()
 
@@ -272,10 +274,12 @@ class PdfReport():
             .replace(r"%", r"\%")
             .replace(r"#", r"\#")
             .replace(r"$", r"\$")
-            .replace(r"^", r"\^{}")
+            .replace(r"^", r"\textasciicircum{}")
             .replace(r"~", r"\textasciitilde{}")
         )
 
+        # A command-line flag (``--strict``) keeps both hyphens; T1 would set ``--`` as an en dash.
+        new_text = re.sub(r"(?<![-\w])--(?=[A-Za-z])", "-{}-", new_text)
         new_text = new_text.replace("\x01", r"\textbackslash{}").replace(_URL_BREAK, r"\allowbreak{}")
         new_text = (
             new_text.replace("\x06", r"\textasciigrave{}").replace("\x07", r"\textquoteleft{}")
@@ -572,18 +576,18 @@ class PdfReport():
             "\\end{tabular}",
             "\\end{center}",
             "",
+            self._risk_scale_note(axis_labels),
+            "",
             "The resulting product determines the overall risk band:",
             "",
             "\\begin{center}",
-            "\\begin{tabular}{lcl}",
+            "\\begin{tabular}{lc}",
             "\\toprule",
-            "\\textbf{Band} & \\textbf{Score range} & \\textbf{Colour} \\\\",
+            "\\textbf{Band} & \\textbf{Score range} \\\\",
             "\\midrule",
         ]
         for label, range_text, colour in self._risk_band_ranges():
-            lines.append(
-                f"\\cellcolor{{{colour}}}{label} & {range_text} & \\cellcolor{{{colour}}}~ \\\\"
-            )
+            lines.append(f"\\cellcolor{{{colour}}}{label} & {range_text} \\\\")
         lines.extend([
             "\\bottomrule",
             "\\end{tabular}",
@@ -623,6 +627,57 @@ class PdfReport():
         ])
         return "\n".join(lines) + "\n"
 
+    @classmethod
+    def _risk_scale_note(cls: type['PdfReport'], axis_labels: list[tuple[str, int]]) -> str:
+        """What the scores imply for the bands, worked out from the scale and the band thresholds."""
+        scores = [score for _name, score in axis_labels]
+        lowest, highest = min(scores), max(scores)
+        missing = [value for value in range(lowest, highest + 1) if value not in scores]
+        if not missing:
+            return ""
+        second = sorted(scores)[1]
+        third = sorted(scores)[2] if len(scores) > 2 else second
+
+        def band(score: int) -> str:
+            return cls._classify_risk_score(score)[0] or "unbanded"
+
+        gaps = ", ".join(str(value) for value in missing)
+        return (
+            f"The scale is not contiguous: no level scores {gaps}. With these scores a risk that is at the "
+            f"lowest level on one dimension is at most {band(lowest * highest)} ({lowest} $\\times$ {highest} = "
+            f"{lowest * highest}); one at the second level or above on both is at least {band(second * second)} "
+            f"({second} $\\times$ {second} = {second * second}); and {band(third * third)} ({third * third} or "
+            f"more) needs the third level or above on both."
+        )
+
+    _RISK_CHUNK_WORDS = 60
+
+    @classmethod
+    def _risk_prose_chunks(cls: type['PdfReport'], text: str) -> list[str]:
+        """``text`` cut at sentence ends (never inside a code span) into pieces of about
+        ``_RISK_CHUNK_WORDS`` words, so one long cell spreads over several table rows, which a
+        longtable may break between."""
+        sentences: list[str] = []
+        start = 0
+        for match in re.finditer(r"(?<=[.;:])\s+(?=[A-Z(`*])", text):
+            if text[:match.start()].count("`") % 2 == 0:
+                sentences.append(text[start:match.start()])
+                start = match.end()
+        sentences.append(text[start:])
+        chunks: list[str] = []
+        current: list[str] = []
+        words = 0
+        for sentence in sentences:
+            count = len(sentence.split())
+            if current and words + count > cls._RISK_CHUNK_WORDS:
+                chunks.append(" ".join(current))
+                current, words = [], 0
+            current.append(sentence)
+            words += count
+        if current:
+            chunks.append(" ".join(current))
+        return [chunk for chunk in chunks if chunk.strip()]
+
     def _risk_test_evidence_cell(self, text: str) -> str:
         """The Test Evidence cell: one ID per line when it is a list of IDs, else the prose."""
         parts = [part.strip().rstrip(".").strip() for part in re.split(r"[,;]", text)]
@@ -643,21 +698,14 @@ class PdfReport():
 
         preamble = self.build_risk_scoring_matrix()
 
-        column_fragments = [
-            "@{}p{4.0cm}",
-            "p{5.0cm}",
-            "p{4.2cm}",
-            "p{4.2cm}",
-            "p{3.4cm}",
-            "p{6.3cm}",
-            "p{3.6cm}",
-            "p{4.7cm}",
-            "@{}",
-        ]
-        column_spec = "".join(column_fragments)
-        controls_width = 6.3
-        residual_width = 3.6
-        test_evidence_width = 4.7
+        # The eight widths fill the A3 text block (390 mm) less the 14 inter-column gaps of 3 pt.
+        widths = [4.2, 5.3, 4.45, 4.45, 3.6, 6.7, 3.8, 5.0]
+        column_spec = "@{}" + "".join(
+            f">{{\\raggedright\\arraybackslash}}p{{{width}cm}}" for width in widths
+        ) + "@{}"
+        controls_width = widths[5]
+        residual_width = widths[6]
+        test_evidence_width = widths[7]
 
         table_lines = self._begin_a3_landscape_block(clearpage=True)
         # The heading sits on the A3 page with its table, never alone at the foot of the
@@ -694,7 +742,6 @@ class PdfReport():
                 "\\toprule",
                 header_row,
                 "\\endhead",
-                "\\rowcolors{2}{gray!10}{white}",
             ]
         )
 
@@ -710,15 +757,15 @@ class PdfReport():
             risk_level_cell = self._format_risk_rating_cell(label, score, colour)
             residual_level_cell = self._format_risk_rating_cell(residual_label, residual_score, residual_colour)
             residual_risk_text = risk.attributes.get("residual_risk", "")
-            controls_text = self.process_text(risk.attributes.get("controls", ""))
 
             risk_expression = (
                 f"{self.process_text(severity)} $\\times$ {self.process_text(probability)} = {risk_level_cell}"
             )
 
-            control_lines = [controls_text] if controls_text else ["-"]
-            controls_content = " \\\\ ".join(control_lines)
-            controls_section = f"\\parbox[t]{{{controls_width}cm}}{{{controls_content}}}"
+            # A long Controls cell continues on rows of its own, so the row can break across pages.
+            control_chunks = [self.process_text(chunk) for chunk in self._risk_prose_chunks(
+                risk.attributes.get("controls", ""))] or ["-"]
+            controls_section = f"\\parbox[t]{{{controls_width}cm}}{{\\raggedright {control_chunks[0]}}}"
 
             residual_lines = [
                 f"{self.process_text(residual_severity)} $\\times$ {self.process_text(residual_probability)}"
@@ -727,11 +774,18 @@ class PdfReport():
             if residual_risk_text:
                 residual_lines.append(self.process_text(residual_risk_text))
             residual_content = " \\\\ ".join([line for line in residual_lines if line] or ["-"])
-            residual_cell = f"\\parbox[t]{{{residual_width}cm}}{{{residual_content}}}"
-            test_evidence_text = self._risk_test_evidence_cell(risk.attributes.get("test_evidence", ""))
-            test_evidence_content = test_evidence_text if test_evidence_text else "-"
+            residual_cell = f"\\parbox[t]{{{residual_width}cm}}{{\\raggedright {residual_content}}}"
+            evidence_parts = self._risk_test_evidence_cell(risk.attributes.get("test_evidence", "")).split(
+                " \\newline ")
+            evidence_parts = [part for part in evidence_parts if part] or ["-"]
+            # Spread the evidence IDs over as many rows as the Controls take.
+            per_row = max(1, -(-len(evidence_parts) // len(control_chunks)))
+            evidence_chunks = [
+                " \\newline ".join(evidence_parts[start:start + per_row])
+                for start in range(0, len(evidence_parts), per_row)
+            ]
             test_evidence_cell = (
-                f"\\parbox[t]{{{test_evidence_width}cm}}{{\\raggedright {test_evidence_content}}}"
+                f"\\parbox[t]{{{test_evidence_width}cm}}{{\\raggedright {evidence_chunks[0]}}}"
             )
             title_text = self.process_text(risk.title)
             id_text = self.process_text_impl(risk.risk_id, set())
@@ -749,10 +803,22 @@ class PdfReport():
                 residual_cell,
                 test_evidence_cell,
             ]
-            row_ending = " \\\\ \\midrule"
-            if index == len(risk_page.items) - 1:
-                row_ending = " \\\\"
-            table_lines.append(" & ".join(row_cells) + row_ending)
+            last = index == len(risk_page.items) - 1
+            continuation_count = max(len(control_chunks), len(evidence_chunks)) - 1
+            first_ending = " \\\\" if (continuation_count or last) else " \\\\ \\midrule"
+            table_lines.append(" & ".join(row_cells) + first_ending)
+            for position in range(1, continuation_count + 1):
+                controls_more = control_chunks[position] if position < len(control_chunks) else ""
+                evidence_more = evidence_chunks[position] if position < len(evidence_chunks) else ""
+                ending = " \\\\" if (position < continuation_count or last) else " \\\\ \\midrule"
+                table_lines.append(
+                    " & " * 5
+                    + (f"\\parbox[t]{{{controls_width}cm}}{{\\raggedright {controls_more}}}" if controls_more else "")
+                    + " & & "
+                    + (f"\\parbox[t]{{{test_evidence_width}cm}}{{\\raggedright {evidence_more}}}"
+                       if evidence_more else "")
+                    + ending
+                )
 
         table_lines.extend(["\\bottomrule", "\\end{longtable}"])
         table_lines.extend(self._end_a3_landscape_block())
@@ -1531,7 +1597,7 @@ class PdfReport():
         )
 
     def _evidence_id_text(self, evidence_id: str) -> str:
-        return breakable(evidence_id)
+        return breakable_id(evidence_id)
 
     def _evidence_header(self, record: EvidenceRecord) -> str:
         evidence_id = record.evidence_id
@@ -1566,7 +1632,7 @@ class PdfReport():
         if record.duration_text:
             parts.append(latex_escape(record.duration_text))
         if record.source:
-            parts.append("Source " + breakable_code(record.source))
+            parts.append("Source \\texttt{" + breakable_id(record.source) + "}")
         if not parts:
             return ""
         separator = "\\enspace\\textbar\\enspace "
@@ -1580,10 +1646,37 @@ class PdfReport():
     def _figure_label(self, evidence_id: str, position: int) -> str:
         return f"{FIGURE_LABEL_PREFIX}{evidence_anchor(evidence_id)[len(LABEL_PREFIX):]}:{position + 1}"
 
+    # A whole cell that is a Python or JSON literal prints as a reader would say it.
+    _CELL_LITERALS = {"True": "yes", "False": "no", "true": "yes", "false": "no", "None": "(null)", "null": "(null)"}
+    _CELL_QUOTE_LEFT = "\x07"
+    _CELL_QUOTE_RIGHT = "\x08"
+    _CELL_DQUOTE_LEFT = "\x0e"
+
+    @classmethod
+    def _cell_latex(cls: type['PdfReport'], cell: str, *, value_column: bool) -> str:
+        """One check-table cell: literals said in words, paired backticks and an opening quote
+        set as matched quotes, and breakable only where a value can break."""
+        text = PdfReport._normalise_unicode(cell)
+        if value_column and not text.strip():
+            return "\\textit{(empty)}"
+        if text.strip() in cls._CELL_LITERALS:
+            return cls._CELL_LITERALS[text.strip()]
+        text = re.sub(r"`([^`]*)`", lambda m: cls._CELL_QUOTE_LEFT + m.group(1) + cls._CELL_QUOTE_RIGHT, text)
+        text = PdfReport._OPENING_SINGLE.sub(lambda m: m.group(1) + cls._CELL_QUOTE_LEFT, text)
+        text = PdfReport._OPENING_DOUBLE.sub(lambda m: m.group(1) + cls._CELL_DQUOTE_LEFT, text)
+        replacements = {
+            cls._CELL_QUOTE_LEFT: "\\textquoteleft{}",
+            cls._CELL_QUOTE_RIGHT: "\\textquoteright{}",
+            cls._CELL_DQUOTE_LEFT: "\\textquotedblleft{}",
+            '"': "\\textquotedblright{}",
+        }
+        return breakable_cell(text, replacements=replacements)
+
     def _rows_table(self, rows: list[list[str]]) -> str:
         cells_per_row = 3
         lines = [
-            "\\par\\smallskip{\\footnotesize\\setlength{\\tabcolsep}{3pt}\\renewcommand{\\arraystretch}{1.05}%",
+            "\\par\\nopagebreak\\smallskip"
+            "{\\footnotesize\\setlength{\\tabcolsep}{3pt}\\renewcommand{\\arraystretch}{1.05}%",
             "\\noindent\\begin{tabularx}{\\linewidth}{@{}"
             + ">{\\raggedright\\arraybackslash}X" * cells_per_row
             + "@{}}",
@@ -1595,8 +1688,15 @@ class PdfReport():
             cells = [str(cell) for cell in row]
             if len(cells) > cells_per_row:
                 cells = cells[:cells_per_row - 1] + [" ".join(cells[cells_per_row - 1:])]
+            given = len(cells)
             cells += [""] * (cells_per_row - len(cells))
-            lines.append(" & ".join(breakable(PdfReport._normalise_unicode(cell)) for cell in cells) + " \\\\")
+            lines.append(
+                " & ".join(
+                    self._cell_latex(cell, value_column=0 < column < given) if column < given else ""
+                    for column, cell in enumerate(cells)
+                )
+                + " \\\\"
+            )
         lines += ["\\bottomrule", "\\end{tabularx}\\par}"]
         return "\n".join(lines) + "\n"
 
@@ -1614,6 +1714,9 @@ class PdfReport():
                 item += f" {{\\footnotesize--- Figure~\\ref{{{figure_label}}}}}"
             elif assertion.checked_at:
                 item += " {\\footnotesize--- checked at " + breakable_code(assertion.checked_at) + "}"
+            if assertion.rows:
+                # The bullet stays with the head of its table.
+                lines.append(f"\\needspace{{{min(6 + len(assertion.rows), 12)}\\baselineskip}}")
             lines.append(item)
             if assertion.rows:
                 lines.append(self._rows_table(assertion.rows))
@@ -1629,6 +1732,7 @@ class PdfReport():
         re.compile(r"^\s*Created document with id: "),
         re.compile(r"^\s*Listed a total of \d+ chunks?\b"),
         re.compile(r"Refusing to bid: job requires specific host"),
+        re.compile(r"^\s*Source document classes: "),
     )
 
     def _evidence_output(self, record: EvidenceRecord) -> str:
@@ -1710,17 +1814,42 @@ class PdfReport():
         suffix = f" (\\mbox{{{latex_escape(volume_code)}}})" if volume_code and with_volume else ""
         return f"\\mbox{{\\textbf{{{latex_escape(shell_id)}}}}}{suffix}"
 
-    def _evidence_bound_by(self, evidence_id: str) -> str:
+    @staticmethod
+    def _asserted_requirement_ids(record: EvidenceRecord) -> list[str]:
+        """The requirements the record's own assertions and figures name, in first-seen order."""
+        found: list[str] = []
+        for assertion in record.assertions:
+            found.extend(assertion.requirement_ids)
+        for figure in record.figures:
+            found.extend(figure.requirement_ids)
+        return list(dict.fromkeys(req_id for req_id in found if req_id.strip()))
+
+    def _evidence_bound_by(self, evidence_id: str, record: Optional[EvidenceRecord] = None) -> str:
+        """The shells that bind the record, then the requirements it evidences.
+
+        "Covers" lists only the requirements the record's own assertions name; each shell's
+        heading already lists everything the shell verifies. A record whose assertions name
+        none says the requirements come from its shells.
+        """
         binding = self._evidence_bindings().get(evidence_id)
         if binding is None or not binding.shell_ids:
             return ""
         shells = ", ".join(self._shell_reference(shell_id) for shell_id in binding.shell_ids)
         text = "\\textbf{Bound by:} " + shells
-        if binding.requirement_ids:
-            text += ". \\textbf{Requirements:} " + self._requirement_list(binding.requirement_ids)
+        asserted = self._asserted_requirement_ids(record) if record is not None else []
+        if asserted:
+            text += ". \\textbf{Covers:} " + self._requirement_list(asserted)
+        elif binding.requirement_ids:
+            text += ". \\textbf{Covers (through its shells):} " + self._requirement_list(binding.requirement_ids)
         if binding.tier1_ids:
             text += ". \\textbf{Tier 1:} " + self._requirement_list(binding.tier1_ids)
-        return "\\par\\smallskip\\noindent{\\footnotesize\\raggedright " + text + ".\\par}\n"
+        # One unsplit paragraph, kept with the block above it.
+        plain = re.sub(r"\\[a-zA-Z]+|[{}]", "", text)
+        lines = 1 + len(plain) // 120
+        return (
+            f"\\par\\nopagebreak[3]\\needspace{{{lines + 1}\\baselineskip}}\\smallskip\\noindent"
+            "{\\footnotesize\\raggedright\\interlinepenalty=10000 " + text + ".\\par}\n"
+        )
 
     def _evidence_bindings(self) -> dict[str, EvidenceBinding]:
         if self._bindings is None:
@@ -1752,7 +1881,7 @@ class PdfReport():
         parts.append(self._evidence_output(record))
         parts.append(self._evidence_figures(record, staged_dir))
         if self.evidence_bound_by:
-            parts.append(self._evidence_bound_by(evidence_id))
+            parts.append(self._evidence_bound_by(evidence_id, record))
         return "".join(part for part in parts if part)
 
     def _home_description(self, evidence_id: str) -> str:
@@ -1778,16 +1907,17 @@ class PdfReport():
         """One line for a binding whose record is printed in full elsewhere."""
         record = self._load_record(evidence_id)
         self._warn_missing_fields(evidence_id, record.missing_fields)
+        captions = self._captions_for_shell(record, self._current_shell_id)
         line = (
-            "\\par\\smallskip\\noindent{\\small\\raggedright\\textbf{Evidence "
+            f"\\par\\needspace{{{min(3 + len(captions), 8)}\\baselineskip}}\\smallskip\\noindent"
+            "{\\small\\raggedright\\textbf{Evidence "
             + self._evidence_id_text(evidence_id)
             + "} ("
             + coloured_status(record.status)
             + "): full record "
             + self._home_description(evidence_id)
-            + ".\\par}\n"
+            + ".\\par}\\nopagebreak\n"
         )
-        captions = self._captions_for_shell(record, self._current_shell_id)
         if captions:
             line += "{\\footnotesize\\begin{itemize}\n"
             line += "\n".join("\\item " + self.process_text(caption) for caption in captions)
@@ -1919,6 +2049,36 @@ class PdfReport():
             content.append(item)
         return content
 
+    @staticmethod
+    def _is_autotest_block(item: dict) -> bool:
+        info = str(item.get("info", "") or "").strip()
+        return item.get("type") == "block_code" and bool(info) and info.split()[0] == "autotest"
+
+    @classmethod
+    def _prose_before_evidence(cls: type['PdfReport'], items: list[dict]) -> list[dict]:
+        """Shell content with any prose that sits between ``autotest`` blocks moved before the
+        first of them, so the shell's evidence rows print as one table after all its text."""
+        first = next((index for index, item in enumerate(items) if cls._is_autotest_block(item)), None)
+        if first is None:
+            return items
+        tail = items[first:]
+        prose = [item for item in tail if not cls._is_autotest_block(item)]
+        if not prose:
+            return items
+        blocks = [item for item in tail if cls._is_autotest_block(item)]
+        return items[:first] + prose + blocks
+
+    @classmethod
+    def shell_description_items(cls: type['PdfReport'], test: "Test") -> list[dict]:
+        """The shell's prose before its first ``autotest`` block, without its requirement lines."""
+        items: list[dict] = []
+        for item in test.content:
+            if cls._is_autotest_block(item):
+                break
+            if item.get("type") == "paragraph" and not cls._is_requirement_id_line(item):
+                items.append(item)
+        return items
+
     def _render_shell(self, test: "Test", *, command: str = "subsection", under: str = "") -> str:
         """A test shell: its heading (with the shell's label) and its content.
 
@@ -1930,7 +2090,7 @@ class PdfReport():
         self._current_shell_id = test.test_id
         self._reference_rows_in_shell = 0
         try:
-            body = self.render_test_content(self._shell_content(test, under))
+            body = self.render_test_content(self._prose_before_evidence(self._shell_content(test, under)))
         finally:
             self._current_shell_id = None
         return heading + body + "\n\n"
@@ -2595,13 +2755,16 @@ class PdfReport():
         report_code = latex_escape(plan.manifest.report_code)
         report = f"{report_code} {latex_escape(version)}".strip()
         count = len(plan.manifest.volumes)
-        scope = ", ".join(f"\\mbox{{{latex_escape(tier1_id)}}}" for tier1_id in spec.tier1_ids)
+        tier1_ids = [f"\\mbox{{{latex_escape(tier1_id)}}}" for tier1_id in spec.tier1_ids]
+        scope = tier1_ids[0] if len(tier1_ids) == 1 else ", ".join(tier1_ids[:-1]) + " and " + tier1_ids[-1]
         records = f"{record_count} record{'s' if record_count != 1 else ''}"
+        notes = [*plan.manifest.reader_notes, *spec.reader_notes]
         return (
             self._toc_heading("section", "How to read this volume")
             + f"This is evidence volume {spec.index} of {count} of {report}"
             + (f", {latex_escape(plan.manifest.report_title)}" if plan.manifest.report_title else "")
-            + f". It covers Tier 1 {scope}, and holds every evidence record whose home is a test shell "
+            + f". It covers Tier 1 requirement{'s' if len(tier1_ids) != 1 else ''} {scope}, and holds every "
+            + "evidence record whose home is a test shell "
             + f"under {'them' if len(spec.tier1_ids) > 1 else 'it'}, each exactly once: {records}.\n\n"
             + "\\textbf{Where the rest is.} The requirements, the test shells (their description, steps and "
             + f"expected results) and the release verdict are in {report}. Here a shell appears only as a "
@@ -2619,13 +2782,17 @@ class PdfReport():
             + "covers and, where recorded, a table of check, expected and actual values.\n"
             + "\\item \\textbf{Output:} the console output, only when the test printed some.\n"
             + "\\item \\textbf{Figures:} the screenshots and images the test saved.\n"
-            + "\\item \\textbf{Bound by:} every test shell, requirement and Tier 1 that uses the record. "
-            + "A shell in another volume is shown with that volume's code.\n"
+            + "\\item \\textbf{Bound by:} every test shell that uses the record (a shell in another "
+            + "volume is shown with that volume's code), then \\textbf{Covers:} the requirements the "
+            + "record's own assertions name, and the Tier 1s above its shells. A record whose assertions "
+            + "name no requirement lists its shells' requirements instead.\n"
             + "\\end{itemize}\n\n"
+            + "".join(self._reader_note_latex(note) for note in notes)
             + "\\textbf{Figures.} Each figure is the original image collected from CI, embedded unaltered at "
-            + "its native resolution and only scaled to fit the page. Its caption ends with the first 12 "
-            + "hexadecimal characters of the SHA-256 of the original file, so the image can be checked "
-            + "against the CI artifact.\n\n"
+            + "its native resolution and only scaled to fit the page. Its caption gives the first 12 "
+            + "hexadecimal characters of the SHA-256 of the original file, followed by the page or test "
+            + "line where it was checked, so the image can be checked against the CI artifact. A table "
+            + "under an assertion is drawn from the values the test checked; it is not a screenshot.\n\n"
             + "\\textbf{Records bound more than once.} A record used by several shells is printed in full "
             + "once, under its home shell. Every other shell that binds it shows a one-line pointer: to the "
             + "page in this volume, or to the volume that holds the record.\n\n"
@@ -2634,11 +2801,26 @@ class PdfReport():
             + "\\clearpage\n"
         )
 
+    def _reader_note_latex(self, note: "ReaderNote") -> str:
+        """A manifest reader note: a bold run-in title, its text, then its glossary."""
+        latex = f"\\textbf{{{self.process_text(note.title).rstrip('.')}.}}"
+        if note.text:
+            latex += " " + self.process_text(note.text)
+        if note.terms:
+            latex += (
+                "\n{\\small\\begin{description}[leftmargin=1.2em,itemsep=1pt,topsep=2pt,parsep=0pt]\n"
+                + "\n".join(
+                    f"\\item[{self.process_text(term)}] {self.process_text(meaning)}" for term, meaning in note.terms
+                )
+                + "\n\\end{description}}"
+            )
+        return latex + "\n\n"
+
     def _volume_record_index(self, plan: "VolumePlan", home_ids: list[str]) -> str:
         columns = (
-            "@{}>{\\raggedright\\arraybackslash}p{0.43\\linewidth}"
-            ">{\\raggedright\\arraybackslash}p{1.45cm}"
-            ">{\\raggedright\\arraybackslash}p{0.31\\linewidth}"
+            "@{}>{\\raggedright\\arraybackslash}p{0.42\\linewidth}"
+            ">{\\raggedright\\arraybackslash}p{2.0cm}"
+            ">{\\raggedright\\arraybackslash}p{0.29\\linewidth}"
             ">{\\raggedleft\\arraybackslash}p{0.9cm}@{}"
         )
         header = "\\textbf{Evidence ID} & \\textbf{Status} & \\textbf{Bound by} & \\textbf{Page} \\\\"
@@ -2670,8 +2852,12 @@ class PdfReport():
             shells = [shell for shell in group.shells if shell.evidence_ids]
             if not shells:
                 fragments.append("No evidence record is bound under this Tier 1.\n")
+            tests = self.document.tests_by_id()
             for shell in shells:
                 heading = f"{shell.shell_id}: {shell.title}" if shell.title else shell.shell_id
+                # Room for the heading, its Verifies line and the head of its first record, so the
+                # heading never ends a page alone.
+                fragments.append("\\par\\needspace{14\\baselineskip}")
                 fragments.append(self._toc_heading("subsection", heading, label=f"vshell:{shell.shell_id}"))
                 if shell.requirement_ids:
                     fragments.append(
@@ -2679,12 +2865,36 @@ class PdfReport():
                         + self._requirement_list(shell.requirement_ids)
                         + ".\\par}\\nopagebreak\n"
                     )
+                test = tests.get(shell.shell_id)
+                if test is not None and self._shell_needs_description(shell.evidence_ids):
+                    # A record with no assertions (a workflow-level result) says nothing of what it
+                    # covers: the shell's own description does.
+                    description = self.md_to_latex(self.shell_description_items(test)).strip()
+                    if description:
+                        fragments.append(
+                            "\\noindent{\\footnotesize\\raggedright\\textbf{Shell description.} "
+                            + description + "\\par}\\nopagebreak\n"
+                        )
                 self._current_shell_id = shell.shell_id
                 for evidence_id in shell.evidence_ids:
                     if evidence_id in plan.evidence:
                         fragments.append(self._render_autotest_binding(evidence_id))
                 self._current_shell_id = None
         return "\n".join(fragments)
+
+    def _shell_needs_description(self, evidence_ids: list[str]) -> bool:
+        """True when the shell binds a workflow-level record (or one with no assertion and no
+        description), which says nothing of what it covers: only the shell's text does."""
+        for evidence_id in evidence_ids:
+            try:
+                record = self._load_record(evidence_id)
+            except (OSError, ValueError):
+                continue
+            if record.kind.strip().lower() == "workflow" or (
+                not record.assertions and not record.description.strip()
+            ):
+                return True
+        return False
 
     def render_evidence_volume(
         self,

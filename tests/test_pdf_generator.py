@@ -96,7 +96,7 @@ class TestPdfGenerator(unittest.TestCase):
         # ^, ~, %, #, $ are LaTeX special chars that frequently appear in user prose
         # (e.g. DICOM PatientName "LAST^FIRST", percentages, comments referencing #issue).
         latex = PdfReport.process_text_impl("LAST^FIRST 50% off ~50 #x $1", set())
-        self.assertIn(r"\^{}", latex)
+        self.assertIn(r"LAST\textasciicircum{}FIRST", latex)
         self.assertIn(r"\%", latex)
         self.assertIn(r"\textasciitilde{}", latex)
         self.assertIn(r"\#", latex)

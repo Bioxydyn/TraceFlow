@@ -73,6 +73,59 @@ def breakable(text: str, *, run: int = _LONG_RUN, replacements: Optional[dict[st
     return "".join(out)
 
 
+# An ID breaks only after one of these, and after ``::`` as a whole (never between its colons).
+_ID_BREAK_AFTER = frozenset("-_.")
+
+
+def breakable_id(text: str) -> str:
+    """An ID (``PY-TEST-VOX-X-001A``, ``tests/a.py::TestB::test_c``) escaped, breakable only
+    after ``-``, ``_``, ``.``, ``/`` and ``::``, so no line ends inside a token of the ID."""
+    out: list[str] = []
+    for position, ch in enumerate(text):
+        out.append(LATEX_TEXT_ESCAPES.get(ch, ch))
+        following = text[position + 1] if position + 1 < len(text) else ""
+        if ch in _ID_BREAK_AFTER or ch == "/":
+            out.append(r"\allowbreak{}")
+        elif ch == ":" and position > 0 and text[position - 1] == ":" and following != ":":
+            out.append(r"\allowbreak{}")
+    return "".join(out)
+
+
+# In a table cell: no break inside a date or time (``2026-11-12T01:50:45.089``), a decimal,
+# ``::`` or ``...``.
+_NO_BREAK_PAIRS = (
+    re.compile(r"\d[:.-]\d"), re.compile(r"::"), re.compile(r"\.\."),
+)
+
+
+def breakable_cell(text: str, *, run: int = 24, replacements: Optional[dict[str, str]] = None) -> str:
+    """Like :func:`breakable`, for a value in a table cell: a time, ``::`` and ``...`` stay
+    whole, and a run of ``run`` characters with no break point gets one."""
+    out: list[str] = []
+    since_break = 0
+    for position, ch in enumerate(text):
+        if replacements and ch in replacements:
+            out.append(replacements[ch])
+            since_break += 1
+            continue
+        out.append(LATEX_TEXT_ESCAPES.get(ch, ch))
+        if ch.isspace():
+            since_break = 0
+            continue
+        pair = text[position:position + 2]
+        keep_whole = len(pair) == 2 and any(pattern.fullmatch(text[max(0, position - 1):position + 2])
+                                            or pattern.fullmatch(pair) for pattern in _NO_BREAK_PAIRS)
+        if ch in _BREAK_AFTER and not keep_whole:
+            out.append(r"\allowbreak{}")
+            since_break = 0
+            continue
+        since_break += 1
+        if since_break >= run:
+            out.append(r"\allowbreak{}")
+            since_break = 0
+    return "".join(out)
+
+
 def breakable_code(text: str, replacements: Optional[dict[str, str]] = None) -> str:
     r"""``\texttt`` that escapes its text and may break after ``/ . _ : -``."""
     return r"\texttt{" + breakable(text, replacements=replacements) + "}"

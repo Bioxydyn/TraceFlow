@@ -775,3 +775,123 @@ def test_bare_urls_in_prose_can_break_after_separators() -> None:
     assert latex.endswith(r"\mbox{\hyperref[REQ-1]{\textbf{REQ-1}}}.")
     # Ordinary words are left alone.
     assert PdfReport.process_text_impl("a well-known sub-project", set()) == "a well-known sub-project"
+
+
+# ------------------------------------------------------------------ round-2 layout rules
+
+
+def test_ids_break_only_at_their_separators() -> None:
+    from traceflow.evidence_render import breakable_id
+
+    latex = breakable_id("PY-tests/a_b.py::TestC::test_d")
+    assert latex == (
+        "PY-\\allowbreak{}tests/\\allowbreak{}a\\_\\allowbreak{}b.\\allowbreak{}py::\\allowbreak{}"
+        "TestC::\\allowbreak{}test\\_\\allowbreak{}d"
+    )
+    # No break inside a token, however long, and none between the colons of ``::``.
+    assert "\\allowbreak" not in breakable_id("TestComplianceCoupling")
+    assert ":\\allowbreak{}:" not in latex
+
+
+def test_table_cells_keep_times_and_ellipses_whole() -> None:
+    from traceflow.evidence_render import breakable_cell
+
+    window = breakable_cell("2026-11-12T01:50:45.089 to 2026-11-12T01:50:45.093 UTC")
+    assert window == "2026-11-12T01:50:45.089 to 2026-11-12T01:50:45.093 UTC"
+    assert breakable_cell("a/b") == "a/\\allowbreak{}b"
+    assert breakable_cell("wait...done") == "wait...\\allowbreak{}done"
+
+
+def test_check_table_cells_say_literals_and_quote_backticks() -> None:
+    cell = PdfReport._cell_latex
+    assert cell("True", value_column=True) == "yes"
+    assert cell("False", value_column=True) == "no"
+    assert cell("None", value_column=True) == "(null)"
+    assert cell("", value_column=True) == "\\textit{(empty)}"
+    assert cell("", value_column=False) == ""
+    quoted = cell("`Demo` (`PYTHON-00-00`)", value_column=True)
+    assert quoted.startswith("\\textquoteleft{}Demo\\textquoteright{}")
+    assert "\\textasciigrave" not in quoted
+    assert cell("'User disabled'", value_column=True).startswith("\\textquoteleft{}User")
+
+
+def test_rows_table_pads_short_rows_without_empty_marks(tmp_path: Path) -> None:
+    report = _report(tmp_path, tmp_path)
+    latex = report._rows_table([["only a check"]])
+    assert "only a check &  & " in latex and "(empty)" not in latex
+    assert latex.startswith("\\par\\nopagebreak")
+
+
+def test_prose_flags_keep_both_hyphens() -> None:
+    latex = PdfReport.process_text_impl("run with --strict and then -- pause", set())
+    assert "-{}-strict" in latex
+    assert "then -- pause" in latex
+
+
+def test_prose_between_autotest_blocks_moves_before_the_evidence() -> None:
+    def autotest(evidence_id: str) -> dict:
+        return {"type": "block_code", "info": "autotest", "text": evidence_id}
+
+    note = {"type": "paragraph", "children": [{"type": "text", "text": "A note."}]}
+    intro = {"type": "paragraph", "children": [{"type": "text", "text": "Intro."}]}
+    items = [intro, autotest("A"), note, autotest("B")]
+    assert PdfReport._prose_before_evidence(items) == [intro, note, autotest("A"), autotest("B")]
+    assert PdfReport._prose_before_evidence([intro, autotest("A")]) == [intro, autotest("A")]
+
+
+def test_record_covers_only_its_own_assertions_requirements(tmp_path: Path) -> None:
+    results = tmp_path / "results"
+    _write_result(results, "PY-UPLOAD", figure=True)
+    latex = _render_record(tmp_path, results, "PY-UPLOAD", evidence_bound_by=True)
+    assert "\\textbf{Covers:} \\mbox{\\hyperref[REQ-VOX-UPLOAD-001]" in latex
+    assert "\\textbf{Requirements:}" not in latex
+    assert "\\interlinepenalty=10000" in latex
+
+
+def test_record_with_no_assertion_covers_through_its_shells(tmp_path: Path) -> None:
+    from traceflow.evidence import EvidenceRecord
+
+    results = tmp_path / "results"
+    _write_result(results, "PY-UPLOAD")
+    report = _report(tmp_path, results)
+    bare = EvidenceRecord(evidence_id="PY-UPLOAD", origin="result.json", result_dir=str(results / "PY-UPLOAD"))
+    latex = report._evidence_bound_by("PY-UPLOAD", bare)
+    assert "\\textbf{Covers (through its shells):}" in latex
+
+
+def test_record_home_is_the_shell_its_id_names() -> None:
+    from traceflow.volumes import record_names_shell
+
+    assert record_names_shell("PY-TEST-VOX-BLINDING-014A", "TEST-VOX-BLINDING-014")
+    assert record_names_shell("TEST-VOX-BLINDING-014", "TEST-VOX-BLINDING-014")
+    assert not record_names_shell("PY-TEST-VOX-BLINDING-014A", "TEST-VOX-BLINDING-01")
+    assert not record_names_shell("PY-TEST-VOX-BLINDING-0145", "TEST-VOX-BLINDING-014")
+
+
+def test_manifest_reader_notes_are_validated() -> None:
+    from traceflow.volumes import ManifestError, parse_manifest
+
+    raw = {
+        "report": {"code": "R", "title": "T"},
+        "reader_notes": [{"title": "Test lanes", "text": "Mock and real."},
+                         {"title": "Glossary", "terms": {"chunk": "A part of a file."}}],
+        "volumes": [{"code": "R-E01", "slug": "a", "title": "A", "tier1": ["T1"],
+                     "reader_notes": [{"title": "Users", "text": "Seeded users."}]}],
+    }
+    manifest = parse_manifest(raw)
+    assert [note.title for note in manifest.reader_notes] == ["Test lanes", "Glossary"]
+    assert manifest.reader_notes[1].terms == [("chunk", "A part of a file.")]
+    assert manifest.volumes[0].reader_notes[0].text == "Seeded users."
+    raw["reader_notes"] = [{"title": "Empty"}]
+    with pytest.raises(ManifestError, match="needs `text` or `terms`"):
+        parse_manifest(raw)
+
+
+def test_volume_how_to_read_prints_the_manifest_notes(tmp_path: Path, fake_latex: _FakeLatex) -> None:
+    report, _entries, _index = _volume_render(tmp_path, "BXD-VF-019-E01")
+    tex = fake_latex.tex
+    assert "It covers Tier 1 requirement \\mbox{REQ-VF-T1-001}, and holds" in tex
+    assert "\\par\\needspace{14\\baselineskip}" in tex
+    note = PdfReport._reader_note_latex(report, __import__("traceflow.volumes", fromlist=["ReaderNote"]).ReaderNote(
+        title="Glossary", terms=[("short ID", "A short `id`.")]))
+    assert note.startswith("\\textbf{Glossary.}") and "\\item[short ID] A short \\texttt{id}." in note

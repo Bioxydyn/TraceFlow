@@ -45,7 +45,7 @@ import json
 import re
 import sys
 from dataclasses import dataclass, field
-from typing import Optional, Union, cast
+from typing import Callable, Optional, Union, cast
 
 import yaml
 
@@ -61,6 +61,7 @@ SHELL_UNASSIGNED = "unassigned"
 _HOME_RANK = {SHELL_FUNCTIONAL: 0, SHELL_REGULATORY: 1, SHELL_TIER1: 2}
 
 _MANIFEST_KEYS = {
+    "reader_notes",
     "structure_revision",
     "report",
     "tier1_prefix",
@@ -70,7 +71,8 @@ _MANIFEST_KEYS = {
     "volumes",
 }
 _REPORT_KEYS = {"code", "title"}
-_VOLUME_KEYS = {"code", "slug", "title", "audience", "tier1", "max_pages", "max_mb", "homes"}
+_VOLUME_KEYS = {"code", "slug", "title", "audience", "tier1", "max_pages", "max_mb", "homes", "reader_notes"}
+_NOTE_KEYS = {"title", "text", "terms"}
 _SLUG = re.compile(r"[a-z0-9][a-z0-9-]*")
 
 
@@ -94,6 +96,16 @@ class VolumePartitionError(ValueError):
 
 
 @dataclass
+class ReaderNote:
+    """A paragraph of a volume's "How to read this volume": a bold title, then text and/or a
+    glossary (term -> meaning). Text may use backtick code spans."""
+
+    title: str
+    text: str = ""
+    terms: list[tuple[str, str]] = field(default_factory=list)
+
+
+@dataclass
 class VolumeSpec:
     code: str
     slug: str
@@ -106,6 +118,8 @@ class VolumeSpec:
     max_mb: Optional[float] = None
     # Evidence ID -> home shell ID, or ``None`` to let the rule pick a shell in this volume.
     homes: dict[str, Optional[str]] = field(default_factory=dict)
+    # Notes for this volume only, after the manifest's own.
+    reader_notes: list[ReaderNote] = field(default_factory=list)
 
 
 @dataclass
@@ -119,6 +133,8 @@ class VolumeManifest:
     require_single_parent: Optional[bool] = None
     procedural_files: list[str] = field(default_factory=list)
     regulatory_families: list[str] = field(default_factory=lambda: list(DEFAULT_REGULATORY_FAMILIES))
+    # Notes printed in every volume's "How to read this volume".
+    reader_notes: list[ReaderNote] = field(default_factory=list)
 
     def volume(self, code_or_slug: str) -> VolumeSpec:
         for spec in self.volumes:
@@ -198,6 +214,49 @@ def _homes(raw: object, where: str, errors: list[str]) -> dict[str, Optional[str
     return homes
 
 
+def _reader_notes(raw: object, where: str, errors: list[str]) -> list[ReaderNote]:
+    """``reader_notes``: a list of ``{title, text?, terms?}``; ``terms`` maps a term to its meaning."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        errors.append(f"`{where}` must be a list of notes")
+        return []
+    notes: list[ReaderNote] = []
+    for position, raw_note in enumerate(cast("list[object]", raw)):
+        here = f"{where}[{position}]"
+        data = _as_mapping(raw_note)
+        if data is None:
+            errors.append(f"`{here}` must be a mapping with `title` and `text` or `terms`")
+            continue
+        unknown = sorted(set(data) - _NOTE_KEYS)
+        if unknown:
+            errors.append(f"`{here}` has unknown keys {unknown} (known: {sorted(_NOTE_KEYS)})")
+        title = _text(data, "title", f"{here}.title", errors)
+        text = _text(data, "text", f"{here}.text", errors, required=False)
+        terms: list[tuple[str, str]] = []
+        raw_terms = data.get("terms")
+        if raw_terms is not None:
+            term_map = _as_mapping(raw_terms)
+            if term_map is None:
+                errors.append(f"`{here}.terms` must map each term to its meaning")
+            else:
+                for term, meaning in term_map.items():
+                    if not isinstance(meaning, str) or not meaning.strip() or not str(term).strip():
+                        errors.append(f"`{here}.terms` entry `{term}` needs a non-empty meaning")
+                        continue
+                    terms.append((str(term).strip(), " ".join(meaning.split())))
+        if not text and not terms:
+            errors.append(f"`{here}` needs `text` or `terms`")
+        notes.append(ReaderNote(title=title, text=" ".join(text.split()), terms=terms))
+    return notes
+
+
+def record_names_shell(evidence_id: str, shell_id: str) -> bool:
+    """True when the record's ID is the shell's ID with a runner prefix and/or a letter suffix
+    (``PY-TEST-VOX-BLINDING-014A`` names ``TEST-VOX-BLINDING-014``)."""
+    return bool(re.fullmatch(r"(?:[A-Z]{2,3}-)?" + re.escape(shell_id) + r"[A-Z]{0,2}", evidence_id))
+
+
 def _volume_spec(raw: object, position: int, errors: list[str]) -> Optional[VolumeSpec]:
     where = f"volumes[{position - 1}]"
     data = _as_mapping(raw)
@@ -228,6 +287,7 @@ def _volume_spec(raw: object, position: int, errors: list[str]) -> Optional[Volu
         max_pages=int(max_pages) if max_pages is not None else None,
         max_mb=_positive_number(data, "max_mb", where, errors, integer=False),
         homes=_homes(data.get("homes"), where, errors),
+        reader_notes=_reader_notes(data.get("reader_notes"), f"{where}.reader_notes", errors),
     )
 
 
@@ -271,6 +331,7 @@ def parse_manifest(raw: object, path: str = "<manifest>") -> VolumeManifest:
         else list(DEFAULT_REGULATORY_FAMILIES)
     )
 
+    reader_notes = _reader_notes(data.get("reader_notes"), "reader_notes", errors)
     volumes: list[VolumeSpec] = []
     raw_volumes = data.get("volumes")
     if not isinstance(raw_volumes, list) or not raw_volumes:
@@ -302,6 +363,7 @@ def parse_manifest(raw: object, path: str = "<manifest>") -> VolumeManifest:
         require_single_parent=single if isinstance(single, bool) else None,
         procedural_files=procedural,
         regulatory_families=families,
+        reader_notes=reader_notes,
     )
 
 
@@ -604,6 +666,10 @@ def plan_volumes(document: Document, manifest: VolumeManifest) -> VolumePlan:
             shell_rank[shell_id],
         )
 
+    def named_home_key(evidence_id: str) -> Callable[[str], tuple[int, int, int, int, int]]:
+        """``home_key``, preferring the shell whose ID the record's ID is built on."""
+        return lambda shell_id: (0 if record_names_shell(evidence_id, shell_id) else 1, *home_key(shell_id))
+
     bindings = document.evidence_bindings(hierarchy)
 
     # Home overrides.
@@ -652,10 +718,10 @@ def plan_volumes(document: Document, manifest: VolumeManifest) -> VolumePlan:
             if override_shell is not None and override_shell in in_volume:
                 home_shell = override_shell
             elif override_shell is None and in_volume:
-                home_shell = min(in_volume, key=home_key)
+                home_shell = min(in_volume, key=named_home_key(evidence_id))
             reason = "override"
         elif candidates:
-            home_shell = min(candidates, key=home_key)
+            home_shell = min(candidates, key=named_home_key(evidence_id))
             reason = shells[home_shell].shell_class
         elif all(
             shells[shell_id].shell_class == SHELL_PROCEDURAL or not shells[shell_id].requirement_ids
