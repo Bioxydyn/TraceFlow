@@ -202,7 +202,7 @@
 \BLOCK{ endfor }
 \end{tabular}
 \end{table}
-\BLOCK{ elif cover_signature_boxes }
+\BLOCK{ elif cover_signature_boxes and not cover_no_signoff }
 \begin{table}[H]
 \renewcommand{\arraystretch}{1.35}
 \arrayrulecolor{gray} % Set the color of the horizontal and vertical lines to gray
@@ -273,6 +273,8 @@
 \end{tabular}
 \end{table}
 
+\BLOCK{ if not cover_no_signoff }
+% No sign-off with cover_no_signoff: the document is approved in a separate system.
 \vspace{0.4cm}
 
 
@@ -317,6 +319,7 @@
 \noindent \rule{6cm}{0.4pt} \\
 \noindent Date
 \end{minipage}
+\BLOCK{ endif }
 \BLOCK{ endif }
 \BLOCK{ if cover_note }
 

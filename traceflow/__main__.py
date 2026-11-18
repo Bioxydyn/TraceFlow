@@ -140,6 +140,15 @@ def _run(
             "omitting the 'Manual tests carried out by' block (for fully automated packs).",
         ),
     ] = False,
+    cover_no_signoff: Annotated[
+        bool,
+        Parameter(
+            name="--cover-no-signoff",
+            help="Keep the cover table but render no sign-off: no signature lines or boxes "
+            "(for documents approved in a separate system). Cannot be combined with "
+            "--cover-signature-boxes or --cover-single-signoff.",
+        ),
+    ] = False,
     no_right_logo: Annotated[
         bool,
         Parameter(
@@ -354,6 +363,10 @@ def _run(
         document_set_file=document_set_file,
         risk_register_ref=risk_register_ref,
     )
+    if not usage_error and cover_no_signoff and (cover_signature_boxes or cover_single_signoff):
+        usage_error = "--cover-no-signoff renders no sign-off, so it cannot be combined with " + (
+            "--cover-signature-boxes" if cover_signature_boxes else "--cover-single-signoff"
+        )
     if not usage_error:
         try:
             check_commit(commit)
@@ -449,6 +462,7 @@ def _run(
             cover_result=cover_result,
             cover_approved_usage=cover_approved_usage,
             cover_single_signoff=cover_single_signoff,
+            cover_no_signoff=cover_no_signoff,
             no_right_logo=no_right_logo,
             document_code=document_code,
             document_type=document_type,

@@ -196,6 +196,50 @@ def test_document_set_table_follows_the_cover(tmp_path: Path, fake_latex: _FakeL
     assert "& 9 & 2 &" in table
 
 
+SIGNOFF_TEXT = (
+    "Validation pack result approved by", "Manual tests carried out by", "Meaning of this signature",
+    "Lead Software Engineer", "Head of Core Lab",
+)
+
+
+def test_cover_no_signoff_keeps_the_cover_table_and_the_approval_note(tmp_path: Path, fake_latex: _FakeLatex) -> None:
+    document_set = parse_document_set(_document_set(), "set.json")
+    _render_hierarchy(tmp_path, document_set=document_set, commit="c4a3b477ecdba56e", cover_result="Passed",
+                      cover_no_signoff=True)
+    cover = fake_latex.tex.split("\\section*{Document set}")[0]
+    assert "\\textbf{Result} & Passed \\\\" in cover and "\\textbf{Test Date}" in cover
+    assert "Approval of this report covers it and every document listed" in cover
+    for text in SIGNOFF_TEXT:
+        assert text not in cover, text
+    assert "\\rule{6cm}" not in cover
+
+
+@pytest.mark.parametrize("boxes", [False, True])
+def test_cover_no_signoff_drops_the_lines_and_the_boxes(tmp_path: Path, fake_latex: _FakeLatex, boxes: bool) -> None:
+    _render_files(tmp_path, cover_signature_boxes=boxes, cover_no_signoff=True)
+    tex = fake_latex.tex
+    assert "\\textbf{Version under test}" in tex and "\\textbf{Tester}" in tex
+    for text in SIGNOFF_TEXT:
+        assert text not in tex, text
+    assert "\\fbox{\\begin{minipage}[c][4.8cm]" not in tex and "\\rule{6cm}" not in tex
+
+
+@pytest.mark.parametrize(
+    ("options", "present"),
+    [
+        ({}, ["Manual tests carried out by", "Validation pack result approved by"]),
+        ({"cover_single_signoff": True}, ["Validation pack result approved by"]),
+        ({"cover_signature_boxes": True}, ["Lead Software Engineer", "Head of Core Lab"]),
+    ],
+)
+def test_cover_signoff_is_unchanged_without_the_flag(
+    tmp_path: Path, fake_latex: _FakeLatex, options: dict, present: list[str]
+) -> None:
+    _render_files(tmp_path, **options)
+    for text in present:
+        assert text in fake_latex.tex, text
+
+
 def test_document_set_mismatch_fails_before_latex(tmp_path: Path, fake_latex: _FakeLatex) -> None:
     bad = parse_document_set(_document_set(documents=_document_set()["documents"][:1]), "set.json")
     with pytest.raises(DocumentSetError, match="no entry for volumes"):
@@ -454,6 +498,39 @@ def test_cli_passes_cover_and_footer_options(tmp_path: Path, monkeypatch: pytest
     assert rc == 0
     assert (captured["cover_version"], captured["cover_engineer"]) == ("Demo 1.0 (commit abc1234)", "")
     assert (captured["commit"], captured["date_format"]) == ("abc1234", "%d %B %Y")
+
+
+def test_cli_passes_cover_no_signoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict = {}
+
+    class _Stub:
+        def __init__(self, document: object, **_: object) -> None:
+            pass
+
+        def render(self, **kwargs: object) -> bytes:
+            captured.update(kwargs)
+            return b"%PDF-FAKE"
+
+    monkeypatch.setattr(traceflow_main, "process_directory", lambda directory, version: object())
+    monkeypatch.setattr(traceflow_main, "PdfReport", _Stub)
+    assert traceflow_main._run(str(tmp_path), "1.0", str(tmp_path / "out.pdf")) == 0
+    assert captured["cover_no_signoff"] is False
+    assert traceflow_main._run(str(tmp_path), "1.0", str(tmp_path / "out.pdf"), cover_no_signoff=True) == 0
+    assert captured["cover_no_signoff"] is True
+
+
+@pytest.mark.parametrize(
+    ("boxes", "single", "flag"),
+    [(True, False, "--cover-signature-boxes"), (False, True, "--cover-single-signoff")],
+)
+def test_cli_rejects_cover_no_signoff_with_a_signoff_option(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], boxes: bool, single: bool, flag: str
+) -> None:
+    rc = traceflow_main._run(str(tmp_path), "1.0", str(tmp_path / "out.pdf"), cover_no_signoff=True,
+                             cover_signature_boxes=boxes, cover_single_signoff=single)
+    assert rc == 2
+    assert f"--cover-no-signoff renders no sign-off, so it cannot be combined with {flag}" in capsys.readouterr().err
+    assert not (tmp_path / "out.pdf").exists()
 
 
 def test_cli_renders_the_hierarchy_report(tmp_path: Path, fake_latex: _FakeLatex) -> None:

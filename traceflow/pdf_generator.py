@@ -2205,6 +2205,7 @@ class PdfReport():
         cover_result: Optional[str] = None,
         cover_approved_usage: Optional[str] = None,
         cover_single_signoff: bool = False,
+        cover_no_signoff: bool = False,
         no_right_logo: bool = False,
         document_code: Optional[str] = None,
         document_type: Optional[str] = None,
@@ -2224,6 +2225,8 @@ class PdfReport():
 
         ``cover_rows`` (label, LaTeX value) replaces the standard cover table and its
         sign-off blocks (an evidence volume is approved as part of its report).
+        ``cover_no_signoff`` keeps the standard cover table and leaves out every sign-off
+        block (a document approved in a separate system).
 
         ``cover_version`` / ``cover_engineer``: ``None`` prints the row blank (today's cover,
         filled in by hand), ``""`` leaves the row out, any other text fills it.
@@ -2243,6 +2246,7 @@ class PdfReport():
         tex_vars["cover_signature_boxes"] = cover_signature_boxes
         tex_vars["cover_no_tester"] = cover_no_tester
         tex_vars["cover_single_signoff"] = cover_single_signoff
+        tex_vars["cover_no_signoff"] = cover_no_signoff
         tex_vars["cover_test_date"] = self.process_text(cover_test_date) if cover_test_date else ""
         tex_vars["cover_result"] = self.process_text(cover_result) if cover_result else ""
         tex_vars["cover_approved_usage"] = self.process_text(cover_approved_usage) if cover_approved_usage else ""
@@ -2422,6 +2426,7 @@ class PdfReport():
         cover_result: Optional[str] = None,
         cover_approved_usage: Optional[str] = None,
         cover_single_signoff: bool = False,
+        cover_no_signoff: bool = False,
         no_right_logo: bool = False,
         document_code: Optional[str] = None,
         document_type: Optional[str] = None,
@@ -2581,6 +2586,7 @@ class PdfReport():
                 cover_result=cover_result,
                 cover_approved_usage=cover_approved_usage,
                 cover_single_signoff=cover_single_signoff,
+                cover_no_signoff=cover_no_signoff,
                 no_right_logo=no_right_logo,
                 document_code=document_code,
                 document_type=document_type,
