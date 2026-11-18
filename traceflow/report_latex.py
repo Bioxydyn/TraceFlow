@@ -309,6 +309,7 @@ class StructureRenderer:
         return self.how_to_read(version) + self.release_results() + self.ius_table()
 
     def how_to_read(self, version: str) -> str:
+        assert self.layout is not None
         reference = self.report.evidence_mode == "reference"
         report = latex_escape(f"{self.report_code} {version}".strip()) or "this report"
         # With a volume manifest the chapters follow it, volume by volume, which need not be the

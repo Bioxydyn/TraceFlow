@@ -33,7 +33,7 @@ from traceflow.evidence_render import (
 )
 from traceflow.parser import parse_markdown, process_directory
 from traceflow.pdf_generator import PdfReport
-from traceflow.volumes import parse_manifest, plan_volumes
+from traceflow.volumes import ReaderNote, parse_manifest, plan_volumes
 from tests.test_volumes import _corpus, _manifest
 
 
@@ -892,6 +892,5 @@ def test_volume_how_to_read_prints_the_manifest_notes(tmp_path: Path, fake_latex
     tex = fake_latex.tex
     assert "It covers Tier 1 requirement \\mbox{REQ-VF-T1-001}, and holds" in tex
     assert "\\par\\needspace{14\\baselineskip}" in tex
-    note = PdfReport._reader_note_latex(report, __import__("traceflow.volumes", fromlist=["ReaderNote"]).ReaderNote(
-        title="Glossary", terms=[("short ID", "A short `id`.")]))
+    note = PdfReport._reader_note_latex(report, ReaderNote(title="Glossary", terms=[("short ID", "A short `id`.")]))
     assert note.startswith("\\textbf{Glossary.}") and "\\item[short ID] A short \\texttt{id}." in note

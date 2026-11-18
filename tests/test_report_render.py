@@ -630,7 +630,8 @@ def test_evidence_index_groups_record_ids_by_family() -> None:
     family = StructureRenderer._FAMILY_ID
     match = family.match("PW-TEST-VOX-UPLOAD-019b")
     assert match is not None and match.group("family") == "PW-TEST-VOX-UPLOAD-" and match.group("suffix") == "019b"
-    assert family.match("PY-TEST-VOX-AUDITLOG-012A").group("suffix") == "012A"
+    suffixed = family.match("PY-TEST-VOX-AUDITLOG-012A")
+    assert suffixed is not None and suffixed.group("suffix") == "012A"
     # A path-derived ID has no shell-style number at its end and is listed whole.
     assert family.match("PY-tests-unit-test_x.py-TestY-test_z") is None
     assert family.match("PY-UPLOAD") is None
