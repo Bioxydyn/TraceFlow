@@ -76,7 +76,8 @@ Users must sign in with their email address and a password.
 A test's `manualtest` code block prints a fillable Pass / Fail / Skip form, and an `autotest` block
 naming an evidence ID prints that record from `--test-results-dir`. A risk lists `Hazardous
 Situation`, `Harm`, `Cause`, `Severity`, `Probability`, `Controls` (naming the requirements that
-implement them), `Test evidence` and the residual scores. The
+implement them), `Test evidence` and the residual scores. Set
+`math: true` in `config.yml` to typeset `$...$` and `$$...$$` as LaTeX maths. The
 [reference](https://github.com/Bioxydyn/TraceFlow/blob/master/docs/reference.md#markdown-formats)
 has every format, and the example source uses each one.
 

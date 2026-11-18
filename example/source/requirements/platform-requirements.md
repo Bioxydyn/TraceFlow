@@ -2,13 +2,24 @@
 
 The platform requirements derive from the Tier 1 requirements. Each names its Tier 1 parent on a
 `Parent:` line. The sub-sections under each requirement also show the Markdown that TraceFlow
-typesets: inline code, images, tables, code blocks and mermaid diagrams.
+typesets: maths, inline code, images, tables, code blocks and mermaid diagrams.
 
 ## REQ-001: User authentication
 
 Parent: REQ-T1-001
 
 Users must sign in with their email address and a password before they can see any study.
+
+### Example maths
+
+With `math: true` in `config.yml`, `$$...$$` is display maths and `$...$` inline maths. A password
+must have an entropy of at least 60 bits:
+
+$$ H = L \times \log_2(N) \geq 60 $$
+
+where $L$ is the password length and $N$ the number of possible symbols, so a 12-character password
+drawn from $N = 64$ symbols has $H = 12 \times 6 = 72$ bits. Write `\$` for a dollar sign: the
+account costs \$0.
 
 ### Example inline code formatting
 

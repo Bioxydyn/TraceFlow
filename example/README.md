@@ -13,9 +13,9 @@ test evidence in [`test-results/`](test-results); [`build.sh`](build.sh) builds 
 
 | File | What it shows |
 |---|---|
-| [`source/config.yml`](source/config.yml) | the product name, the file order and the requirement hierarchy (Tier 1 prefix `REQ-T1-`) |
+| [`source/config.yml`](source/config.yml) | the product name, maths (`math: true`), the file order and the requirement hierarchy (Tier 1 prefix `REQ-T1-`) |
 | [`source/requirements/tier1-requirements.md`](source/requirements/tier1-requirements.md) | Tier 1 requirements with their `IUS Source` |
-| [`source/requirements/platform-requirements.md`](source/requirements/platform-requirements.md) | requirements with `Parent:` lines, plus an image, a table, a code block and mermaid diagrams |
+| [`source/requirements/platform-requirements.md`](source/requirements/platform-requirements.md) | requirements with `Parent:` lines, plus maths, an image, a table, a code block and mermaid diagrams |
 | [`source/tests/platform-tests.md`](source/tests/platform-tests.md) | tests with `manualtest` forms and `autotest` evidence, a test cover page, and Tier 1 journey tests |
 | [`source/risks/risk-register.md`](source/risks/risk-register.md) | risks scored before and after their controls, each naming its requirement and tests |
 | [`source/design/design-spec.md`](source/design/design-spec.md) | a design document with a mermaid architecture diagram |

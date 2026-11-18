@@ -1,5 +1,7 @@
 name: DemoScan
 title_style: validation_pack
+# Read $...$ and $$...$$ as maths. Without it, a $ prints as written.
+math: true
 # These files come first, in this order; the rest follow in path order.
 order:
   - requirements/tier1-requirements.md

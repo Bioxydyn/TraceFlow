@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Iterable, Optional, cast
 
-from traceflow.parser import Document, HierarchyConfig, Requirement, Test
+from traceflow.parser import Document, HierarchyConfig, Requirement, Test, math_source
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from traceflow.evidence import EvidenceRecord
@@ -300,6 +300,8 @@ def split_ius_source(content: list[dict]) -> tuple[str, list[dict]]:
 def _inline_text(node: dict) -> str:
     if node.get("type") in {"text", "codespan"}:
         return str(node.get("text", ""))
+    if node.get("type") == "math":
+        return math_source(node)
     if node.get("type") in {"softbreak", "linebreak"}:
         return "\n"
     return "".join(_inline_text(child) for child in node.get("children", []) or [])

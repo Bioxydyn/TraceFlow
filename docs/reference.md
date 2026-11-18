@@ -85,6 +85,7 @@ An optional `config.yml` in the input directory can set:
 
 ```yaml
 name: DemoScan                  # the product name used in titles and footers
+math: true                      # read $...$ and $$...$$ as maths (see Maths below); default false
 # Files are read in sorted path order (case-insensitive). Globs listed here come first,
 # in this order; a glob that matches no Markdown file is an error.
 order:
@@ -128,6 +129,28 @@ its "Intended use to Tier 1" table. Sub-headings, lists, tables, images, code bl
 diagrams (a `mermaid` code block, optionally starting with `%% caption: ...`) are typeset. TraceFlow
 reads Markdown as text: `_` never starts emphasis, and a backslash only escapes Markdown's own
 characters, so file names, keys and paths print as written.
+
+### Maths
+
+Maths is off unless `config.yml` sets `math: true`. Without it a `$` prints as written, as it has
+since 0.0.31, so prices, shell variables and DICOM values are never read as maths.
+
+With `math: true`, `$$...$$` is display maths and `$...$` inline maths, in LaTeX:
+
+```markdown
+A password needs $H \geq 60$ bits, where
+
+$$ H = L \times \log_2(N) $$
+```
+
+- Inline maths follows pandoc's rule: the opening `$` must be followed by a non-space, and the
+  closing `$` must follow a non-space and must not be followed by a digit. So `$20 and $30` and
+  `$HOME and $PATH` stay text, but `$HOME/$USER` would be read as maths: write `\$HOME/\$USER`.
+- `\$` is a literal dollar, inside maths and out.
+- Maths is typeset in paragraphs, list items and table cells. In a heading, emphasis or a risk
+  register field it prints as written.
+- Code spans and code blocks are never maths, and test evidence is never read as maths.
+- A formula with unbalanced braces fails the parse, naming the formula.
 
 ### Tests
 
