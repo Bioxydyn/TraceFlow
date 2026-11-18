@@ -10,7 +10,7 @@ import json
 import re
 import shutil
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import pytest
 
@@ -391,7 +391,8 @@ class _EnvLatex(_FakeLatex):
         self.env: Optional[dict] = None
 
     def __call__(self, command: str, **kwargs: object) -> str:
-        self.env = kwargs.get("env")  # type: ignore[assignment]
+        env = kwargs.get("env")
+        self.env = env if isinstance(env, dict) else None
         return super().__call__(command, **kwargs)
 
 
@@ -615,7 +616,7 @@ def test_risk_trace_summarises_controls_and_points_to_the_register(tmp_path: Pat
     from traceflow.report_latex import StructureRenderer
 
     renderer = StructureRenderer.__new__(StructureRenderer)
-    renderer.report = type("R", (), {"process_text": staticmethod(lambda text: text)})()
+    renderer.report = cast(PdfReport, type("R", (), {"process_text": staticmethod(lambda text: text)})())
     renderer.risk_register_ref = "BXD-VF-020 Risk Register, issued with this report"
     long_text = "First control; " + "the second clause runs on " * 12 + ". A third sentence."
     summary = renderer.control_summary(long_text, "RISK-VOX-001")

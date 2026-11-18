@@ -6,7 +6,9 @@ from pathlib import Path, PurePosixPath
 from typing import Union, List, Generic, Optional, TypeVar, Callable, Type, TYPE_CHECKING
 
 import mistune
+import mistune.plugins
 import yaml
+from mistune.core import BlockState, InlineState
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, avoids an import cycle
     from traceflow.evidence import EvidenceRecord
@@ -814,6 +816,11 @@ def read_file(file_path: str) -> str:
         return file.read()
 
 
+# The characters a backslash escapes. Any other backslash is kept: \-, \., \d, C:\Users.
+_ESCAPABLE = r"""[\\`*_<>\[\]()#|!~'"]"""
+_UNESCAPE = re.compile(r"\\(" + _ESCAPABLE + ")")
+
+
 class _LiteralInlineParser(mistune.InlineParser):
     r"""Inline Markdown that cannot eat the characters of a file name, key or path.
 
@@ -823,18 +830,143 @@ class _LiteralInlineParser(mistune.InlineParser):
     keep their backslash.
     """
 
-    RULE_NAMES = tuple(name for name in mistune.InlineParser.RULE_NAMES if name != "underscore_emphasis")
-    ESCAPE = r"""\\[\\`*_<>\[\]()#|!~'"]"""
+    SPECIFICATION = {
+        **mistune.InlineParser.SPECIFICATION,
+        "emphasis": r"\*+",
+        "escape": r"(?:\\" + _ESCAPABLE + ")+",
+    }
+
+    def parse_escape(self, m: re.Match[str], state: InlineState) -> int:
+        self.process_text(_UNESCAPE.sub(r"\1", m.group(0)), state, parse_emphasis=False)
+        return m.end()
+
+    def process_text(self, text: str, state: InlineState, parse_emphasis: bool = True) -> None:
+        # mistune 3 pairs emphasis delimiters after scanning, over all text: mark each run of
+        # "_" as text the emphasis pass must not use.
+        if not parse_emphasis or "_" not in text:
+            super().process_text(text, state, parse_emphasis)
+            return
+        for piece in re.split(r"(_+)", text):
+            if piece:
+                super().process_text(piece, state, parse_emphasis=not piece.startswith("_"))
+
+
+def _blank_lines_after(src: str, end_pos: int) -> int:
+    """Blank lines between the last text line before ``end_pos`` and the next text (or the end)."""
+    start = end_pos
+    while start > 0 and src[start - 1] in " \t\n":
+        start -= 1
+    stop = end_pos
+    while stop < len(src) and src[stop] in " \t\n":
+        stop += 1
+    return max(src.count("\n", start, stop) - 1, 0)
+
+
+class _LegacyBlockParser(mistune.BlockParser):
+    """Records the blank lines after an indented code block, which mistune 2 kept in its text."""
+
+    def parse_indent_code(self, m: re.Match[str], state: BlockState) -> int:
+        count = len(state.tokens)
+        end_pos = super().parse_indent_code(m, state)
+        self._note_blank_lines(state, count, end_pos)
+        return end_pos
+
+    def _parse_indent_code_fast(self, state: BlockState) -> Optional[int]:
+        count = len(state.tokens)
+        end_pos = super()._parse_indent_code_fast(state)
+        if end_pos is not None:
+            self._note_blank_lines(state, count, end_pos)
+        return end_pos
+
+    @staticmethod
+    def _note_blank_lines(state: BlockState, count: int, end_pos: int) -> None:
+        if len(state.tokens) > count and state.tokens[-1].get("style") == "indent":
+            state.tokens[-1]["_blank_lines_after"] = _blank_lines_after(state.src, end_pos)
+
+
+def _plain_text(tokens: list[dict]) -> str:
+    return "".join(
+        token.get("raw", "\n" if token["type"] == "softbreak" else "") + _plain_text(token.get("children", []))
+        for token in tokens
+    )
+
+
+def _legacy_ast(tokens: list[dict], level: int = 1) -> list[dict]:
+    """mistune 3 tokens in the AST shape TraceFlow reads (mistune 2's), with mistune 2's output.
+
+    Text runs and soft line breaks are one ``text`` node; attributes are flat; blank lines
+    are dropped. mistune 2's readings are kept so documents render unchanged: a code span is
+    trimmed at both edges, an empty fenced block holds one newline, an indented block ends
+    with a newline and one more per blank line after it, and an ordered list has a ``start``
+    only when it does not start at 1.
+    """
+    out: list[dict] = []
+    for token in tokens:
+        kind = token["type"]
+        attrs = token.get("attrs", {})
+        if kind == "blank_line":
+            continue
+        if kind in ("text", "softbreak"):
+            text = token["raw"] if kind == "text" else "\n"
+            if out and out[-1]["type"] == "text":
+                out[-1]["text"] += text
+            else:
+                out.append({"type": "text", "text": text})
+            continue
+        if kind == "image":
+            out.append({"type": "image", "src": attrs["url"], "alt": _plain_text(token.get("children", [])),
+                        "title": attrs.get("title")})
+            continue
+        node: dict = {"type": kind}
+        if kind == "codespan":
+            node["text"] = token["raw"].strip()
+        elif kind in ("inline_html", "block_html"):
+            node["text"] = token["raw"]
+        elif kind == "block_code":
+            if token.get("style") == "indent":
+                node["text"] = token["raw"] + "\n" * (1 + token.get("_blank_lines_after", 0))
+            else:
+                node["text"] = token["raw"] or "\n"
+            node["info"] = attrs.get("info")
+        elif kind == "heading":
+            node["level"] = attrs["level"]
+        elif kind == "link":
+            node["link"] = attrs["url"]
+            node["title"] = attrs.get("title")
+        elif kind == "list":
+            node["ordered"] = attrs["ordered"]
+            node["level"] = attrs["depth"] + 1
+            if attrs["ordered"] and attrs.get("start") is not None:
+                node["start"] = attrs["start"]
+        elif kind == "list_item":
+            node["level"] = level
+        elif kind == "table_cell":
+            node["align"] = attrs.get("align")
+            node["is_head"] = attrs.get("head", False)
+        if "children" in token:
+            child_level = attrs["depth"] + 1 if kind == "list" else level
+            node["children"] = _legacy_ast(token["children"], child_level)
+        out.append(node)
+    return out
+
+
+_MARKDOWN = mistune.Markdown(
+    renderer=None,
+    block=_LegacyBlockParser(),
+    inline=_LiteralInlineParser(),
+    plugins=[mistune.plugins.import_plugin("table"), mistune.plugins.import_plugin("strikethrough")],
+)
+
+
+# A heading's hashes followed by a non-breaking space (``##\u00a0REQ-001: ...``) still start a
+# heading, as they did with mistune 2; CommonMark only takes a space or a tab there.
+_NBSP_HEADING = re.compile(r"^( {0,3}#{1,6})\u00a0", re.MULTILINE)
 
 
 def parse_markdown(content: str) -> list[dict]:
-    renderer = mistune.AstRenderer()
-    parser = mistune.Markdown(
-        renderer,
-        inline=_LiteralInlineParser(renderer),
-        plugins=[mistune.PLUGINS["table"], mistune.PLUGINS["strikethrough"]],
-    )
-    return parser(content)
+    tokens = _MARKDOWN(_NBSP_HEADING.sub(r"\1 ", content))
+    assert isinstance(tokens, list)
+    return _legacy_ast(tokens)
 
 
 def load_config(directory: str) -> dict:

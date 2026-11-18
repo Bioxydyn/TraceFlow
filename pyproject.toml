@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68.0.0", "wheel"]
+requires = ["setuptools>=80", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,19 +7,19 @@ name = "traceflow-rtm"
 version = "0.0.38"
 description = "A Python library for managing software development documentation and testing that automates the generation of PDFs, validation packs, and traceability matrices."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.14"
 license = "LicenseRef-Commercial"
 license-files = ["LICENCE"]
 authors = [
     {name = "Bioxydyn Ltd"},
 ]
 dependencies = [
-    "cairosvg==2.7.1",
-    "Jinja2==3.1.4",
+    "cairosvg==2.9.1",
+    "Jinja2==3.1.6",
     "latex==0.7.0",
-    "mistune==2.0.5",
-    "pyyaml==6.0.1",
-    "cyclopts==3.24.0",
+    "mistune==3.4.0",
+    "pyyaml==6.0.3",
+    "cyclopts==5.5.2",
 ]
 
 [project.scripts]
@@ -38,11 +38,9 @@ dev = [
     "flake8-eradicate",
     "flake8-executable",
     "flake8-fixme",
-    "flake8-printf-formatting",
-    "flake8-return",
     "flake8-walrus",
     "pytest",
-    "ty==0.0.1a26",
+    "ty==0.0.106",
     "types-PyYAML",
 ]
 
@@ -59,11 +57,9 @@ dev = [
     "flake8-eradicate",
     "flake8-executable",
     "flake8-fixme",
-    "flake8-printf-formatting",
-    "flake8-return",
     "flake8-walrus",
     "pytest",
-    "ty==0.0.1a26",
+    "ty==0.0.106",
     "types-PyYAML",
 ]
 
