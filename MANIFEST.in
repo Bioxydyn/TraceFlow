@@ -4,7 +4,10 @@ include MANIFEST.in
 
 recursive-include traceflow *
 recursive-include tests *
-recursive-include examples *
+recursive-include example/source *
+recursive-include example/test-results *
+include example/build.sh example/README.md example/demoscan-logo.png
+include docs/reference.md
 recursive-include traceflow *.jinja
 recursive-include traceflow *.html
 recursive-include traceflow *.svg

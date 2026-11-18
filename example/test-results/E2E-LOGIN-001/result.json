@@ -1,0 +1,108 @@
+{
+  "schema": 1,
+  "id": "E2E-LOGIN-001",
+  "kind": "test",
+  "status": "passed",
+  "workflow_path": ".github/workflows/e2e.yml",
+  "workflow_name": "End-to-end tests",
+  "run_id": 1001,
+  "run_url": "https://ci.example.com/demoscan/runs/1001",
+  "head_sha": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+  "source": "e2e/login.spec.ts::E2E-LOGIN-001: a clinician signs in and reaches the dashboard",
+  "duration_s": 12.41,
+  "description": "In a browser, opens the login page, signs in as the clinician dana.lee and checks the dashboard opens with her role; then tries a wrong password and checks it is refused.",
+  "assertions": [
+    {
+      "caption": "The login page asks for an email address and a password",
+      "requirement_ids": [
+        "REQ-001"
+      ],
+      "rows": [
+        [
+          "page",
+          "/login",
+          "/login"
+        ],
+        [
+          "email field",
+          "present",
+          "present"
+        ],
+        [
+          "password field",
+          "masked",
+          "masked"
+        ]
+      ],
+      "checked_at": "https://demoscan.example/login",
+      "figure": 0
+    },
+    {
+      "caption": "After signing in, the dashboard opens and shows the user's role",
+      "requirement_ids": [
+        "REQ-001"
+      ],
+      "rows": [
+        [
+          "page after login",
+          "/dashboard",
+          "/dashboard"
+        ],
+        [
+          "signed-in role",
+          "clinician",
+          "clinician"
+        ]
+      ],
+      "checked_at": "https://demoscan.example/dashboard",
+      "figure": 1
+    },
+    {
+      "caption": "A wrong password is refused and no session is created",
+      "requirement_ids": [
+        "REQ-001"
+      ],
+      "rows": [
+        [
+          "response status",
+          "401",
+          "401"
+        ],
+        [
+          "session cookie",
+          "absent",
+          "absent"
+        ]
+      ],
+      "checked_at": "e2e/login.spec.ts:41",
+      "figure": null
+    }
+  ],
+  "figures": [
+    {
+      "path": "screenshots/screenshot-001.png",
+      "caption": "The login page asks for an email address and a password",
+      "sha256": "a21c94b6ac7fe41a65252da70e955ab7e867fa7afe0470cc1cae42d7569a20b3",
+      "width": 1200,
+      "height": 700
+    },
+    {
+      "path": "screenshots/screenshot-002.png",
+      "caption": "After signing in, the dashboard opens and shows the user's role",
+      "sha256": "8b33dbf6d4cda52d66437bce335ee1b0706bdfb7f8e2be451acdaa9c12a8fa5f",
+      "width": 1200,
+      "height": 700
+    }
+  ],
+  "output": {
+    "lines": [
+      "opened https://demoscan.example/login",
+      "signed in as dana.lee",
+      "dashboard shown (role: clinician)",
+      "wrong password refused (401)"
+    ],
+    "total_lines": 4,
+    "truncated": false
+  },
+  "jobs": []
+}
