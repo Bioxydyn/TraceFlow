@@ -6,7 +6,9 @@ from pathlib import Path, PurePosixPath
 from typing import Union, List, Generic, Optional, TypeVar, Callable, Type, TYPE_CHECKING
 
 import mistune
+import mistune.plugins
 import yaml
+from mistune.core import BlockState, InlineState
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, avoids an import cycle
     from traceflow.evidence import EvidenceRecord
@@ -108,8 +110,8 @@ class MarkdownDocument:
     category: str
 
     @staticmethod
-    def from_file(file_path: str, category: str) -> 'MarkdownDocument':
-        parsed = parse_markdown(read_file(file_path))
+    def from_file(file_path: str, category: str, *, math: bool = False) -> 'MarkdownDocument':
+        parsed = parse_markdown(read_file(file_path), math=math)
         title = extract_title(parsed)
         content = parsed[1:]
         return MarkdownDocument(title=title, filename=file_path, content=content, category=category)
@@ -134,9 +136,11 @@ class SubDocument(Generic[T]):
         file_path: str,
         item_generator: Callable[[list[dict]], list[T]],
         item_id_pattern: Optional[str] = None,
+        *,
+        math: bool = False,
     ) -> C:
         content = read_file(file_path)
-        parsed_content = parse_markdown(content)
+        parsed_content = parse_markdown(content, math=math)
         # Everything outside an item, except H1 headings, is the file's prose: the text before
         # the first item plus any non-item H2 section (``## Allowlisted gaps``), in order.
         generic_content, _ = split_items(parsed_content, item_id_pattern)
@@ -271,12 +275,15 @@ class RequirementDocument(SubDocument[Requirement]):
         return requirements
 
     @staticmethod
-    def from_file(file_path: str, *, item_id_pattern: Optional[str] = None) -> 'RequirementDocument':
+    def from_file(
+        file_path: str, *, item_id_pattern: Optional[str] = None, math: bool = False
+    ) -> 'RequirementDocument':
         return SubDocument.from_file_impl(
             RequirementDocument,
             file_path,
             lambda parsed: RequirementDocument.item_generator(parsed, item_id_pattern),
             item_id_pattern,
+            math=math,
         )
 
 
@@ -321,12 +328,15 @@ class TestDocument(SubDocument[Test]):
         return tests
 
     @staticmethod
-    def from_file(file_path: str, *, item_id_pattern: Optional[str] = None) -> 'TestDocument':
+    def from_file(
+        file_path: str, *, item_id_pattern: Optional[str] = None, math: bool = False
+    ) -> 'TestDocument':
         return SubDocument.from_file_impl(
             TestDocument,
             file_path,
             lambda parsed: TestDocument.item_generator(parsed, item_id_pattern),
             item_id_pattern,
+            math=math,
         )
 
 
@@ -369,6 +379,8 @@ class RiskDocument(SubDocument[Risk]):
     def _flatten_text(elem: dict) -> str:
         if elem["type"] == "text":
             return elem.get("text", "")
+        if elem["type"] == "math":
+            return math_source(elem)
         if elem["type"] == "codespan":
             return elem.get("text", "")
 
@@ -440,12 +452,15 @@ class RiskDocument(SubDocument[Risk]):
         return risks
 
     @staticmethod
-    def from_file(file_path: str, *, item_id_pattern: Optional[str] = None) -> 'RiskDocument':
+    def from_file(
+        file_path: str, *, item_id_pattern: Optional[str] = None, math: bool = False
+    ) -> 'RiskDocument':
         return SubDocument.from_file_impl(
             RiskDocument,
             file_path,
             lambda parsed: RiskDocument.item_generator(parsed, item_id_pattern),
             item_id_pattern,
+            math=math,
         )
 
 
@@ -814,6 +829,11 @@ def read_file(file_path: str) -> str:
         return file.read()
 
 
+# The characters a backslash escapes. Any other backslash is kept: \-, \., \d, C:\Users.
+_ESCAPABLE = r"""[\\`*_<>\[\]()#|!~'"]"""
+_UNESCAPE = re.compile(r"\\(" + _ESCAPABLE + ")")
+
+
 class _LiteralInlineParser(mistune.InlineParser):
     r"""Inline Markdown that cannot eat the characters of a file name, key or path.
 
@@ -823,18 +843,215 @@ class _LiteralInlineParser(mistune.InlineParser):
     keep their backslash.
     """
 
-    RULE_NAMES = tuple(name for name in mistune.InlineParser.RULE_NAMES if name != "underscore_emphasis")
-    ESCAPE = r"""\\[\\`*_<>\[\]()#|!~'"]"""
+    SPECIFICATION = {
+        **mistune.InlineParser.SPECIFICATION,
+        "emphasis": r"\*+",
+        "escape": r"(?:\\" + _ESCAPABLE + ")+",
+    }
+    UNESCAPE = _UNESCAPE
+
+    def parse_escape(self, m: re.Match[str], state: InlineState) -> int:
+        self.process_text(self.UNESCAPE.sub(r"\1", m.group(0)), state, parse_emphasis=False)
+        return m.end()
+
+    def process_text(self, text: str, state: InlineState, parse_emphasis: bool = True) -> None:
+        # mistune 3 pairs emphasis delimiters after scanning, over all text: mark each run of
+        # "_" as text the emphasis pass must not use.
+        if not parse_emphasis or "_" not in text:
+            super().process_text(text, state, parse_emphasis)
+            return
+        for piece in re.split(r"(_+)", text):
+            if piece:
+                super().process_text(piece, state, parse_emphasis=not piece.startswith("_"))
 
 
-def parse_markdown(content: str) -> list[dict]:
-    renderer = mistune.AstRenderer()
-    parser = mistune.Markdown(
-        renderer,
-        inline=_LiteralInlineParser(renderer),
-        plugins=[mistune.PLUGINS["table"], mistune.PLUGINS["strikethrough"]],
+# Maths, read only when config.yml sets ``math: true``. ``$$...$$`` is display maths. ``$...$`` is
+# inline maths by pandoc's rule: the opening $ is followed by a non-space, and the closing $
+# follows a non-space and is not followed by a digit, so "$20 and $30" stays text. ``\$`` is a
+# literal dollar, and a dollar inside the maths is written ``\$`` too.
+_MATH = (
+    r"\$\$(?P<display_math>(?:\\.|[^$\\])+?)\$\$"
+    r"|\$(?![\s$])(?P<inline_math>(?:\\.|[^$\\])+?)(?<!\s)\$(?!\d)"
+)
+_MATH_ESCAPABLE = r"""[\\`*_<>\[\]()#|!~'"$]"""
+
+
+def _check_math_braces(text: str) -> None:
+    depth = 0
+    for char in re.sub(r"\\.", "", text):
+        depth += {"{": 1, "}": -1}.get(char, 0)
+        if depth < 0:
+            break
+    if depth:
+        raise ValueError(f"The maths `{text}` has unbalanced braces")
+
+
+def _parse_math(inline: mistune.InlineParser, m: re.Match[str], state: InlineState) -> int:
+    display = m.group("display_math")
+    text = display if display is not None else m.group("inline_math")
+    _check_math_braces(text)
+    state.append_token({"type": "math", "raw": text, "display": display is not None})
+    return m.end()
+
+
+class _MathInlineParser(_LiteralInlineParser):
+    """``_LiteralInlineParser`` that also reads ``$...$`` and ``$$...$$`` maths, and ``\\$``."""
+
+    SPECIFICATION = {**_LiteralInlineParser.SPECIFICATION, "escape": r"(?:\\" + _MATH_ESCAPABLE + ")+"}
+    UNESCAPE = re.compile(r"\\(" + _MATH_ESCAPABLE + ")")
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.register("math", _MATH, _parse_math, before="escape", start_chars="$")
+
+
+def _blank_lines_after(src: str, end_pos: int) -> int:
+    """Blank lines between the last text line before ``end_pos`` and the next text (or the end)."""
+    start = end_pos
+    while start > 0 and src[start - 1] in " \t\n":
+        start -= 1
+    stop = end_pos
+    while stop < len(src) and src[stop] in " \t\n":
+        stop += 1
+    return max(src.count("\n", start, stop) - 1, 0)
+
+
+class _LegacyBlockParser(mistune.BlockParser):
+    """Records the blank lines after an indented code block, which mistune 2 kept in its text."""
+
+    def parse_indent_code(self, m: re.Match[str], state: BlockState) -> int:
+        count = len(state.tokens)
+        end_pos = super().parse_indent_code(m, state)
+        self._note_blank_lines(state, count, end_pos)
+        return end_pos
+
+    def _parse_indent_code_fast(self, state: BlockState) -> Optional[int]:
+        count = len(state.tokens)
+        end_pos = super()._parse_indent_code_fast(state)
+        if end_pos is not None:
+            self._note_blank_lines(state, count, end_pos)
+        return end_pos
+
+    @staticmethod
+    def _note_blank_lines(state: BlockState, count: int, end_pos: int) -> None:
+        if len(state.tokens) > count and state.tokens[-1].get("style") == "indent":
+            state.tokens[-1]["_blank_lines_after"] = _blank_lines_after(state.src, end_pos)
+
+
+def _plain_text(tokens: list[dict]) -> str:
+    return "".join(
+        token.get("raw", "\n" if token["type"] == "softbreak" else "") + _plain_text(token.get("children", []))
+        for token in tokens
     )
-    return parser(content)
+
+
+def _legacy_ast(tokens: list[dict], level: int = 1) -> list[dict]:
+    """mistune 3 tokens in the AST shape TraceFlow reads (mistune 2's), with mistune 2's output.
+
+    Text runs and soft line breaks are one ``text`` node; attributes are flat; blank lines
+    are dropped. mistune 2's readings are kept so documents render unchanged: a code span is
+    trimmed at both edges, an empty fenced block holds one newline, an indented block ends
+    with a newline and one more per blank line after it, and an ordered list has a ``start``
+    only when it does not start at 1.
+    """
+    out: list[dict] = []
+    for token in tokens:
+        kind = token["type"]
+        attrs = token.get("attrs", {})
+        if kind == "blank_line":
+            continue
+        if kind in ("text", "softbreak"):
+            text = token["raw"] if kind == "text" else "\n"
+            if out and out[-1]["type"] == "text":
+                out[-1]["text"] += text
+            else:
+                out.append({"type": "text", "text": text})
+            continue
+        if kind == "math":
+            out.append({"type": "math", "text": token["raw"], "display": token["display"]})
+            continue
+        if kind == "image":
+            out.append({"type": "image", "src": attrs["url"], "alt": _plain_text(token.get("children", [])),
+                        "title": attrs.get("title")})
+            continue
+        node: dict = {"type": kind}
+        if kind == "codespan":
+            node["text"] = token["raw"].strip()
+        elif kind in ("inline_html", "block_html"):
+            node["text"] = token["raw"]
+        elif kind == "block_code":
+            if token.get("style") == "indent":
+                node["text"] = token["raw"] + "\n" * (1 + token.get("_blank_lines_after", 0))
+            else:
+                node["text"] = token["raw"] or "\n"
+            node["info"] = attrs.get("info")
+        elif kind == "heading":
+            node["level"] = attrs["level"]
+        elif kind == "link":
+            node["link"] = attrs["url"]
+            node["title"] = attrs.get("title")
+        elif kind == "list":
+            node["ordered"] = attrs["ordered"]
+            node["level"] = attrs["depth"] + 1
+            if attrs["ordered"] and attrs.get("start") is not None:
+                node["start"] = attrs["start"]
+        elif kind == "list_item":
+            node["level"] = level
+        elif kind == "table_cell":
+            node["align"] = attrs.get("align")
+            node["is_head"] = attrs.get("head", False)
+        if "children" in token:
+            child_level = attrs["depth"] + 1 if kind == "list" else level
+            children = token["children"]
+            if kind in _LITERAL_MATH_PARENTS:
+                children = [_math_as_text(child) for child in children]
+            node["children"] = _legacy_ast(children, child_level)
+        out.append(node)
+    return out
+
+
+# Headings, emphasis and struck-out text print their text, not their child nodes: maths in them
+# stays as written, so headings (and the item IDs read from them) parse as they do without maths.
+_LITERAL_MATH_PARENTS = {"heading", "emphasis", "strong", "strikethrough"}
+
+
+def math_source(node: dict) -> str:
+    """A math node (or mistune token) as the Markdown it was read from."""
+    fence = "$$" if node["display"] else "$"
+    return fence + node.get("text", node.get("raw", "")) + fence
+
+
+def _math_as_text(token: dict) -> dict:
+    return {"type": "text", "raw": math_source(token)} if token["type"] == "math" else token
+
+
+_MARKDOWN = mistune.Markdown(
+    renderer=None,
+    block=_LegacyBlockParser(),
+    inline=_LiteralInlineParser(),
+    plugins=[mistune.plugins.import_plugin("table"), mistune.plugins.import_plugin("strikethrough")],
+)
+
+
+# A heading's hashes followed by a non-breaking space (``##\u00a0REQ-001: ...``) still start a
+# heading, as they did with mistune 2; CommonMark only takes a space or a tab there.
+_NBSP_HEADING = re.compile(r"^( {0,3}#{1,6})\u00a0", re.MULTILINE)
+
+
+_MATH_MARKDOWN = mistune.Markdown(
+    renderer=None,
+    block=_LegacyBlockParser(),
+    inline=_MathInlineParser(),
+    plugins=[mistune.plugins.import_plugin("table"), mistune.plugins.import_plugin("strikethrough")],
+)
+
+
+def parse_markdown(content: str, *, math: bool = False) -> list[dict]:
+    """The Markdown AST TraceFlow reads. ``math`` reads ``$...$`` and ``$$...$$`` as maths."""
+    markdown = _MATH_MARKDOWN if math else _MARKDOWN
+    tokens = markdown(_NBSP_HEADING.sub(r"\1 ", content))
+    assert isinstance(tokens, list)
+    return _legacy_ast(tokens)
 
 
 def load_config(directory: str) -> dict:
@@ -899,6 +1116,11 @@ def process_directory(directory: str, version: str) -> Document:
         raise ValueError("config.yml `item_id_pattern` must be a string")
     _compile_item_id_pattern(item_id_pattern)
     hierarchy = HierarchyConfig.from_config(config["hierarchy"]) if "hierarchy" in config else None
+    # ``math: true`` reads $...$ and $$...$$ in the documents as maths; off by default, so a "$"
+    # prints as written. Test evidence is never read as maths.
+    math = config.get("math", False)
+    if not isinstance(math, bool):
+        raise ValueError("config.yml `math` must be true or false")
 
     for relative_path in ordered_markdown_files(directory, config.get("order")):
         file_path = os.path.join(directory, *PurePosixPath(relative_path).parts)
@@ -907,11 +1129,11 @@ def process_directory(directory: str, version: str) -> Document:
         filename_component = path_components[-1]
 
         if top_component.startswith("req") or filename_component.startswith("req"):
-            requirement_doc = RequirementDocument.from_file(file_path, item_id_pattern=item_id_pattern)
+            requirement_doc = RequirementDocument.from_file(file_path, item_id_pattern=item_id_pattern, math=math)
             requirement_doc.source_path = relative_path
             requirements.append(requirement_doc)
         elif top_component.startswith("test") or filename_component.startswith("test"):
-            test_doc = TestDocument.from_file(file_path, item_id_pattern=item_id_pattern)
+            test_doc = TestDocument.from_file(file_path, item_id_pattern=item_id_pattern, math=math)
             test_doc.source_path = relative_path
             tests.append(test_doc)
         elif (
@@ -920,13 +1142,13 @@ def process_directory(directory: str, version: str) -> Document:
             or top_component.startswith("hazard")
             or filename_component.startswith("hazard")
         ):
-            risk_doc = RiskDocument.from_file(file_path, item_id_pattern=item_id_pattern)
+            risk_doc = RiskDocument.from_file(file_path, item_id_pattern=item_id_pattern, math=math)
             risk_doc.source_path = relative_path
             risks.append(risk_doc)
         elif top_component.startswith("design") or filename_component.startswith("design"):
-            design_documents.append(MarkdownDocument.from_file(file_path, category="design"))
+            design_documents.append(MarkdownDocument.from_file(file_path, category="design", math=math))
         else:
-            supplementary_documents.append(MarkdownDocument.from_file(file_path, category="general"))
+            supplementary_documents.append(MarkdownDocument.from_file(file_path, category="general", math=math))
     absolute_dir_path = os.path.abspath(directory)
 
     name = config.get("name", directory)

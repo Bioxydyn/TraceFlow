@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "id": "UNIT-IMPORT-001",
+  "kind": "test",
+  "status": "passed",
+  "workflow_path": ".github/workflows/python.yml",
+  "workflow_name": "Python tests",
+  "run_id": 1002,
+  "run_url": "https://ci.example.com/demoscan/runs/1002",
+  "head_sha": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+  "source": "tests/test_import.py::test_dicom_import_validates_files",
+  "duration_s": 1.92,
+  "description": "Imports a valid 24-slice DICOM series and a text file renamed to .dcm, and checks the first is imported with its slice count and the second is refused.",
+  "assertions": [
+    {
+      "caption": "A valid DICOM series is imported with its slice count",
+      "requirement_ids": [
+        "REQ-002"
+      ],
+      "rows": [
+        [
+          "series imported",
+          "1",
+          "1"
+        ],
+        [
+          "slices",
+          "24",
+          "24"
+        ]
+      ],
+      "checked_at": "tests/test_import.py:22",
+      "figure": null
+    },
+    {
+      "caption": "A file that is not DICOM is refused with a reason",
+      "requirement_ids": [
+        "REQ-002"
+      ],
+      "rows": [
+        [
+          "result",
+          "refused",
+          "refused"
+        ],
+        [
+          "reason",
+          "not a DICOM file",
+          "not a DICOM file"
+        ]
+      ],
+      "checked_at": "tests/test_import.py:35",
+      "figure": null
+    }
+  ],
+  "figures": [],
+  "output": {
+    "lines": [],
+    "total_lines": 0,
+    "truncated": false
+  },
+  "jobs": []
+}

@@ -10,7 +10,7 @@ import json
 import re
 import shutil
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import pytest
 
@@ -391,7 +391,8 @@ class _EnvLatex(_FakeLatex):
         self.env: Optional[dict] = None
 
     def __call__(self, command: str, **kwargs: object) -> str:
-        self.env = kwargs.get("env")  # type: ignore[assignment]
+        env = kwargs.get("env")
+        self.env = env if isinstance(env, dict) else None
         return super().__call__(command, **kwargs)
 
 
@@ -566,11 +567,11 @@ def test_cli_reports_document_set_and_hierarchy_errors(tmp_path: Path, fake_late
     assert no_prefix == 1 and "Tier 1 prefix" in capsys.readouterr().err
 
 
-def test_readme_documents_the_structure_flags() -> None:
-    readme = (Path(__file__).parent.parent / "README.md").read_text()
+def test_the_reference_documents_the_structure_flags() -> None:
+    reference = (Path(__file__).parent.parent / "docs" / "reference.md").read_text()
     for flag in ["--structure hierarchy", "--matrix-style list", "--document-set-file", "--cover-engineer",
-                 "--commit", "--date-format", "--risk-register-ref", "SOURCE_DATE_EPOCH"]:
-        assert flag in readme, flag
+                 "--cover-no-signoff", "--commit", "--date-format", "--risk-register-ref", "SOURCE_DATE_EPOCH"]:
+        assert flag in reference, flag
 
 
 # ------------------------------------------------------------------ end-to-end review fixes
@@ -615,7 +616,7 @@ def test_risk_trace_summarises_controls_and_points_to_the_register(tmp_path: Pat
     from traceflow.report_latex import StructureRenderer
 
     renderer = StructureRenderer.__new__(StructureRenderer)
-    renderer.report = type("R", (), {"process_text": staticmethod(lambda text: text)})()
+    renderer.report = cast(PdfReport, type("R", (), {"process_text": staticmethod(lambda text: text)})())
     renderer.risk_register_ref = "BXD-VF-020 Risk Register, issued with this report"
     long_text = "First control; " + "the second clause runs on " * 12 + ". A third sentence."
     summary = renderer.control_summary(long_text, "RISK-VOX-001")
@@ -630,7 +631,8 @@ def test_evidence_index_groups_record_ids_by_family() -> None:
     family = StructureRenderer._FAMILY_ID
     match = family.match("PW-TEST-VOX-UPLOAD-019b")
     assert match is not None and match.group("family") == "PW-TEST-VOX-UPLOAD-" and match.group("suffix") == "019b"
-    assert family.match("PY-TEST-VOX-AUDITLOG-012A").group("suffix") == "012A"
+    suffixed = family.match("PY-TEST-VOX-AUDITLOG-012A")
+    assert suffixed is not None and suffixed.group("suffix") == "012A"
     # A path-derived ID has no shell-style number at its end and is listed whole.
     assert family.match("PY-tests-unit-test_x.py-TestY-test_z") is None
     assert family.match("PY-UPLOAD") is None

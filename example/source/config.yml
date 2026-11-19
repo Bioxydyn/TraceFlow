@@ -1,0 +1,12 @@
+name: DemoScan
+title_style: validation_pack
+# Read $...$ and $$...$$ as maths. Without it, a $ prints as written.
+math: true
+# These files come first, in this order; the rest follow in path order.
+order:
+  - requirements/tier1-requirements.md
+  - requirements/platform-requirements.md
+# Every requirement traces to exactly one Tier 1 requirement through its Parent: line.
+hierarchy:
+  top_level_prefix: REQ-T1-
+  require_single_parent: true
