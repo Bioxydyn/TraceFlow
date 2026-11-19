@@ -1,0 +1,81 @@
+{
+  "schema": 1,
+  "id": "UNIT-RECONCILE-001",
+  "kind": "test",
+  "status": "passed",
+  "workflow_path": ".github/workflows/python.yml",
+  "workflow_name": "Python tests",
+  "run_id": 1002,
+  "run_url": "https://ci.example.com/demoscan/runs/1002",
+  "head_sha": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+  "source": "tests/test_reconcile.py::test_mismatched_identifiers_are_quarantined",
+  "duration_s": 0.84,
+  "description": "Sends one study whose identifiers disagree and one whose identifiers match through the reconciliation engine, and checks which is stored, which is quarantined and what is audited.",
+  "assertions": [
+    {
+      "caption": "A study whose DICOM and HL7 PatientIDs differ is quarantined and listed for review",
+      "requirement_ids": [
+        "REQ-005"
+      ],
+      "rows": [
+        [
+          "DICOM PatientID",
+          "PAT-00417",
+          "PAT-00417"
+        ],
+        [
+          "HL7 PatientID",
+          "PAT-00471",
+          "PAT-00471"
+        ],
+        [
+          "study status",
+          "quarantined",
+          "quarantined"
+        ],
+        [
+          "stored studies before / after",
+          "3 / 3",
+          "3 / 3"
+        ]
+      ],
+      "checked_at": "https://demoscan.example/review",
+      "figure": 0
+    },
+    {
+      "caption": "A study whose identifiers match is stored, with one audit entry",
+      "requirement_ids": [
+        "REQ-005"
+      ],
+      "rows": [
+        [
+          "study status",
+          "stored",
+          "stored"
+        ],
+        [
+          "audit entries written",
+          "1",
+          "1"
+        ]
+      ],
+      "checked_at": "tests/test_reconcile.py:58",
+      "figure": null
+    }
+  ],
+  "figures": [
+    {
+      "path": "screenshots/screenshot-001.png",
+      "caption": "A study whose DICOM and HL7 PatientIDs differ is quarantined and listed for review",
+      "sha256": "7a4cdb13413451c010180ea19adbe89ba5198abac5001d5edcf1db064c53ab8d",
+      "width": 1200,
+      "height": 700
+    }
+  ],
+  "output": {
+    "lines": [],
+    "total_lines": 0,
+    "truncated": false
+  },
+  "jobs": []
+}

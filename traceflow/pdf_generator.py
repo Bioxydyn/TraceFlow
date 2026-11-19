@@ -1087,6 +1087,8 @@ class PdfReport():
                 "softbreak": lambda _: "\n",
                 "codespan": lambda item: self.code_span_latex(item["text"], self.unique_ids),
                 "raw_latex": lambda item: item.get("text", ""),
+                # Only read with config.yml ``math: true``; the formula is LaTeX, printed as written.
+                "math": lambda item: f"\\[{item['text']}\\]" if item.get("display") else f"\\({item['text']}\\)",
                 "linebreak": lambda _: "\n",
             }
             handler = handlers.get(item["type"])
